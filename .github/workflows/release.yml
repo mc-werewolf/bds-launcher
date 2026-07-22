@@ -1,0 +1,49 @@
+name: Release Windows launcher
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test launcher
+        working-directory: src-tauri
+        run: cargo test --locked
+
+      - name: Build NSIS installer
+        run: pnpm tauri build --bundles nsis
+
+      - name: Prepare stable download name
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem "src-tauri/target/release/bundle/nsis/*-setup.exe" | Select-Object -First 1
+          if (-not $installer) { throw "NSIS installer was not generated" }
+          Copy-Item $installer.FullName "bds-launcher-windows-x64-setup.exe"
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create $env:GITHUB_REF_NAME "bds-launcher-windows-x64-setup.exe" --verify-tag --generate-notes --title $env:GITHUB_REF_NAME

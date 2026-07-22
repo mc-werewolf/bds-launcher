@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Cursor, Write},
@@ -10,6 +11,7 @@ use std::{
 const DOWNLOAD_LINKS_URL: &str =
     "https://net-secondary.web.minecraft-services.net/api/v1.0/download/links";
 const WORLD_NAME: &str = "Werewolf";
+const WORLD_METADATA_URL: &str = "https://mc-werewolf.com/api/world/latest";
 const MAX_BDS_EXPANDED_SIZE: u64 = 2 * 1024 * 1024 * 1024;
 
 pub struct ServerProcess(pub Mutex<Option<Child>>);
@@ -36,6 +38,13 @@ struct DownloadLink {
 }
 #[derive(Debug, Serialize, Deserialize)]
 struct InstalledBds {
+    download_url: String,
+}
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorldRelease {
+    version: String,
+    sha256: String,
     download_url: String,
 }
 #[derive(Debug, Deserialize)]
@@ -139,6 +148,7 @@ pub async fn prepare_bds(install_root: &Path, addon_ids: &[String]) -> Result<Bd
         install_bds(&bytes, &current, &download_url)
             .map_err(|error| format!("BDSをインストールできませんでした: {error}"))?;
     }
+    install_managed_world(&client, &current).await?;
     let (behavior_packs, resource_packs) = apply_addons(install_root, &current, addon_ids)
         .map_err(|error| format!("アドオンをBDSへ適用できませんでした: {error}"))?;
     ensure_server_properties(&current).map_err(|error| error.to_string())?;
@@ -149,6 +159,106 @@ pub async fn prepare_bds(install_root: &Path, addon_ids: &[String]) -> Result<Bd
         behavior_packs,
         resource_packs,
     })
+}
+
+async fn install_managed_world(client: &reqwest::Client, bds_root: &Path) -> Result<(), String> {
+    let world_root = bds_root.join("worlds").join(WORLD_NAME);
+    if world_root.join(".werewolf-world.json").is_file() {
+        return Ok(());
+    }
+
+    let response = client
+        .get(WORLD_METADATA_URL)
+        .send()
+        .await
+        .map_err(|error| format!("Werewolfワールド情報を取得できませんでした: {error}"))?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(());
+    }
+    let release = response
+        .error_for_status()
+        .map_err(|error| format!("WerewolfワールドAPIがエラーを返しました: {error}"))?
+        .json::<WorldRelease>()
+        .await
+        .map_err(|error| format!("Werewolfワールド情報を解析できませんでした: {error}"))?;
+    let download_url = if release.download_url.starts_with("http") {
+        release.download_url.clone()
+    } else {
+        format!("https://mc-werewolf.com{}", release.download_url)
+    };
+    let bytes = client
+        .get(download_url)
+        .send()
+        .await
+        .map_err(|error| format!("Werewolfワールドをダウンロードできませんでした: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Werewolfワールドのダウンロードが拒否されました: {error}"))?
+        .bytes()
+        .await
+        .map_err(|error| format!("Werewolfワールドを読み込めませんでした: {error}"))?;
+    let digest = format!("{:x}", sha2::Sha256::digest(&bytes));
+    if digest != release.sha256 {
+        return Err("WerewolfワールドのSHA-256が一致しません".to_owned());
+    }
+    install_world_archive(&bytes, &world_root, &release)
+        .map_err(|error| format!("Werewolfワールドをインストールできませんでした: {error}"))
+}
+
+fn install_world_archive(
+    bytes: &[u8],
+    world_root: &Path,
+    release: &WorldRelease,
+) -> io::Result<()> {
+    let worlds_root = world_root
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "world target has no parent"))?;
+    let staging = worlds_root.join(".Werewolf.staging");
+    let backup = worlds_root.join(".Werewolf.backup");
+    remove_dir(&staging)?;
+    remove_dir(&backup)?;
+    fs::create_dir_all(&staging)?;
+    extract_zip(bytes, &staging, MAX_BDS_EXPANDED_SIZE)?;
+
+    let content_root = find_level_root(&staging)?.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "ワールドにlevel.datがありません",
+        )
+    })?;
+    if content_root != staging {
+        let normalized = worlds_root.join(".Werewolf.normalized");
+        remove_dir(&normalized)?;
+        fs::rename(&content_root, &normalized)?;
+        remove_dir(&staging)?;
+        fs::rename(&normalized, &staging)?;
+    }
+    fs::write(
+        staging.join(".werewolf-world.json"),
+        serde_json::to_vec_pretty(release)?,
+    )?;
+    if world_root.exists() {
+        fs::rename(world_root, &backup)?;
+    }
+    if let Err(error) = fs::rename(&staging, world_root) {
+        if backup.exists() {
+            let _ = fs::rename(&backup, world_root);
+        }
+        return Err(error);
+    }
+    remove_dir(&backup)
+}
+
+fn find_level_root(root: &Path) -> io::Result<Option<PathBuf>> {
+    if root.join("level.dat").is_file() {
+        return Ok(Some(root.to_path_buf()));
+    }
+    for entry in fs::read_dir(root)? {
+        let path = entry?.path();
+        if path.is_dir() && path.join("level.dat").is_file() {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
 }
 
 fn install_bds(bytes: &[u8], current: &Path, download_url: &str) -> io::Result<()> {
