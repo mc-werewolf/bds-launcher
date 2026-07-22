@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "werewolf-bds-launcher",
+  "productName": "bds-launcher",
   "version": "0.1.0",
   "identifier": "com.werewolf.bdslauncher",
   "build": {
@@ -10,7 +10,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "werewolf-bds-launcher",
+        "title": "bds-launcher",
         "width": 800,
         "height": 600
       }

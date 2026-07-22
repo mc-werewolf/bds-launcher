@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    werewolf_bds_launcher_lib::run()
+    bds_launcher_lib::run()
 }
