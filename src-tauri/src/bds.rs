@@ -22,6 +22,18 @@ impl Default for ServerProcess {
     }
 }
 
+impl Drop for ServerProcess {
+    fn drop(&mut self) {
+        let Ok(process) = self.0.get_mut() else {
+            return;
+        };
+        if let Some(child) = process.as_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct DownloadLinksEnvelope {
     result: DownloadLinks,
