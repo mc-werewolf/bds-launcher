@@ -1,10 +1,17 @@
+use futures_util::{SinkExt, StreamExt};
 use igd_next::{aio::tokio::search_gateway, PortMappingProtocol, SearchOptions};
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
     process::Command,
     sync::{Arc, Mutex},
     time::Duration,
+};
+use tokio::{net::UdpSocket as TokioUdpSocket, sync::mpsc};
+use tokio_tungstenite::{
+    connect_async,
+    tungstenite::{client::IntoClientRequest, http::HeaderValue, Message},
 };
 
 const BDS_PORT: u16 = 19132;
@@ -73,7 +80,10 @@ pub async fn publish(state: NetworkState) -> Result<PublishResult, String> {
         .0
         .lock()
         .map_err(|_| "ネットワーク状態を保存できませんでした")? = Some(session.clone());
-    spawn_heartbeat(state);
+    spawn_heartbeat(state.clone());
+    if endpoint.is_none() {
+        spawn_relay(state.clone(), session.clone());
+    }
     Ok(PublishResult {
         server_id: session.id,
         public_address: endpoint
@@ -185,6 +195,163 @@ fn spawn_heartbeat(state: NetworkState) {
     });
 }
 
+fn spawn_relay(state: NetworkState, session: Session) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            if relay_once(state.clone(), session.clone()).await.is_ok() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            let active = state
+                .0
+                .lock()
+                .ok()
+                .and_then(|value| value.as_ref().map(|value| value.id == session.id))
+                .unwrap_or(false);
+            if !active {
+                break;
+            }
+        }
+    });
+}
+
+async fn relay_once(state: NetworkState, session: Session) -> Result<(), String> {
+    let url = format!(
+        "wss://mc-werewolf.com/api/network/v1/servers/{}/relay",
+        session.id
+    );
+    let mut request = url
+        .into_client_request()
+        .map_err(|error| format!("中継URLを作成できませんでした: {error}"))?;
+    request.headers_mut().insert(
+        "Authorization",
+        HeaderValue::from_str(&format!("Bearer {}", session.token))
+            .map_err(|error| format!("中継認証を作成できませんでした: {error}"))?,
+    );
+    let (websocket, _) = connect_async(request)
+        .await
+        .map_err(|error| format!("中央中継へ接続できませんでした: {error}"))?;
+    let (mut writer, mut reader) = websocket.split();
+    let (outbound, mut outbound_receiver) = mpsc::channel::<Vec<u8>>(256);
+    let writer_task = tauri::async_runtime::spawn(async move {
+        while let Some(frame) = outbound_receiver.recv().await {
+            writer
+                .send(Message::Binary(frame.into()))
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        Ok::<(), String>(())
+    });
+    let mut clients: HashMap<String, std::sync::Arc<TokioUdpSocket>> = HashMap::new();
+    while let Some(message) = reader.next().await {
+        match message.map_err(|error| format!("中継接続が切断されました: {error}"))? {
+            Message::Text(text) => {
+                #[derive(Deserialize)]
+                struct Ready {
+                    #[serde(rename = "type")]
+                    kind: String,
+                    port: u16,
+                }
+                let ready: Ready = serde_json::from_str(text.as_ref())
+                    .map_err(|error| format!("中継準備通知を解析できませんでした: {error}"))?;
+                if ready.kind == "ready" {
+                    let endpoint = Endpoint {
+                        host_name: "mc-werewolf.com".to_owned(),
+                        host_port: ready.port,
+                        mode: "relay",
+                    };
+                    let updated = {
+                        let mut guard = state
+                            .0
+                            .lock()
+                            .map_err(|_| "ネットワーク状態を更新できませんでした")?;
+                        if let Some(current) = guard.as_mut() {
+                            if current.id == session.id {
+                                current.endpoint = Some(endpoint);
+                                Some(current.clone())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(updated) = updated {
+                        heartbeat(&updated).await?;
+                    }
+                }
+            }
+            Message::Binary(frame) => {
+                let (remote_address, payload) = decode_relay_frame(&frame)?;
+                let socket = if let Some(socket) = clients.get(&remote_address) {
+                    socket.clone()
+                } else {
+                    let socket =
+                        std::sync::Arc::new(TokioUdpSocket::bind("0.0.0.0:0").await.map_err(
+                            |error| format!("ローカルUDPを作成できませんでした: {error}"),
+                        )?);
+                    socket
+                        .connect((Ipv4Addr::LOCALHOST, BDS_PORT))
+                        .await
+                        .map_err(|error| format!("ローカルBDSへ接続できませんでした: {error}"))?;
+                    let receive_socket = socket.clone();
+                    let receive_address = remote_address.clone();
+                    let receive_outbound = outbound.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let mut buffer = vec![0_u8; max_datagram_size()];
+                        while let Ok(size) = receive_socket.recv(&mut buffer).await {
+                            if receive_outbound
+                                .send(encode_relay_frame(&receive_address, &buffer[..size]))
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                    });
+                    clients.insert(remote_address.clone(), socket.clone());
+                    socket
+                };
+                socket
+                    .send(payload)
+                    .await
+                    .map_err(|error| format!("BDSへUDPを転送できませんでした: {error}"))?;
+            }
+            Message::Close(_) => break,
+            _ => {}
+        }
+    }
+    drop(outbound);
+    writer_task.await.map_err(|error| error.to_string())??;
+    Err("中央中継が終了しました".to_owned())
+}
+
+fn max_datagram_size() -> usize {
+    65_535
+}
+
+fn encode_relay_frame(address: &str, payload: &[u8]) -> Vec<u8> {
+    let address = address.as_bytes();
+    let mut frame = Vec::with_capacity(2 + address.len() + payload.len());
+    frame.extend_from_slice(&(address.len() as u16).to_be_bytes());
+    frame.extend_from_slice(address);
+    frame.extend_from_slice(payload);
+    frame
+}
+
+fn decode_relay_frame(frame: &[u8]) -> Result<(String, &[u8]), String> {
+    if frame.len() < 2 {
+        return Err("中継フレームが短すぎます".to_owned());
+    }
+    let address_length = u16::from_be_bytes([frame[0], frame[1]]) as usize;
+    if address_length == 0 || frame.len() < 2 + address_length {
+        return Err("中継フレームのアドレス長が不正です".to_owned());
+    }
+    let address = std::str::from_utf8(&frame[2..2 + address_length])
+        .map_err(|error| format!("中継アドレスが不正です: {error}"))?;
+    Ok((address.to_owned(), &frame[2 + address_length..]))
+}
+
 fn local_ip_for_gateway(gateway: SocketAddr) -> Result<IpAddr, String> {
     let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))
         .map_err(|error| format!("ローカルネットワークを確認できませんでした: {error}"))?;
@@ -246,5 +413,13 @@ mod tests {
         for address in ["127.0.0.1", "192.168.1.10", "10.0.0.1", "100.64.0.1"] {
             assert!(!is_public_ip(address.parse().unwrap()));
         }
+    }
+
+    #[test]
+    fn relay_frame_round_trip() {
+        let encoded = encode_relay_frame("203.0.113.10:54321", &[1, 2, 3]);
+        let (address, payload) = decode_relay_frame(&encoded).unwrap();
+        assert_eq!(address, "203.0.113.10:54321");
+        assert_eq!(payload, &[1, 2, 3]);
     }
 }
