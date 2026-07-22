@@ -45,12 +45,33 @@ struct PackManifest {
 #[derive(Debug, Deserialize)]
 struct PackHeader {
     uuid: String,
+    #[serde(deserialize_with = "deserialize_pack_version")]
     version: Vec<u32>,
 }
 #[derive(Debug, Clone, Serialize)]
 struct WorldPack {
     pack_id: String,
     version: Vec<u32>,
+}
+
+fn deserialize_pack_version<'de, D>(deserializer: D) -> Result<Vec<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum PackVersion {
+        Components(Vec<u32>),
+        Dotted(String),
+    }
+
+    match PackVersion::deserialize(deserializer)? {
+        PackVersion::Components(version) => Ok(version),
+        PackVersion::Dotted(version) => version
+            .split('.')
+            .map(|component| component.parse::<u32>().map_err(serde::de::Error::custom))
+            .collect(),
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -385,6 +406,24 @@ fn remove_dir(path: &PathBuf) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_array_and_dotted_pack_versions() {
+        for (value, expected) in [
+            (r#"[1, 1, 356]"#, vec![1, 1, 356]),
+            (r#""2.0.39""#, vec![2, 0, 39]),
+        ] {
+            #[derive(Deserialize)]
+            struct VersionFixture {
+                #[serde(deserialize_with = "deserialize_pack_version")]
+                version: Vec<u32>,
+            }
+            let fixture: VersionFixture =
+                serde_json::from_str(&format!(r#"{{"version":{value}}}"#)).unwrap();
+            assert_eq!(fixture.version, expected);
+        }
+    }
+
     #[test]
     fn reads_bds_version_from_download_url() {
         assert_eq!(
