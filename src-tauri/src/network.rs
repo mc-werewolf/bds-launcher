@@ -250,13 +250,15 @@ async fn relay_once(state: NetworkState, session: Session) -> Result<(), String>
                 struct Ready {
                     #[serde(rename = "type")]
                     kind: String,
+                    #[serde(rename = "hostName")]
+                    host_name: String,
                     port: u16,
                 }
                 let ready: Ready = serde_json::from_str(text.as_ref())
                     .map_err(|error| format!("中継準備通知を解析できませんでした: {error}"))?;
                 if ready.kind == "ready" {
                     let endpoint = Endpoint {
-                        host_name: "mc-werewolf.com".to_owned(),
+                        host_name: ready.host_name,
                         host_port: ready.port,
                         mode: "relay",
                     };
