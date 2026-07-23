@@ -14,11 +14,11 @@ window.addEventListener("DOMContentLoaded", () => {
   const loadingMessage = document.querySelector("#loading-message");
   const retryButton = document.querySelector("#retry-btn");
   const serverDetails = document.querySelector("#server-details");
-  const startServerMsgEl = document.querySelector("#start-server-msg");
-  const publishButton = document.querySelector("#publish-server-btn");
-  const publishMessage = document.querySelector("#publish-server-msg");
+  const startServerButton = document.querySelector("#start-server-btn");
+  const serverStatusMessage = document.querySelector("#server-status-msg");
   const onboardingButton = document.querySelector("#onboarding-btn");
   const agreement = document.querySelector("#eula-agreement");
+  let serverLaunch = null;
 
   const showOnly = (screen) => {
     [appUpdateEl, onboardingScreen, loadingScreen, homeScreen].forEach((element) => {
@@ -96,24 +96,38 @@ window.addEventListener("DOMContentLoaded", () => {
     void prepareServer();
   });
 
-  document.querySelector("#start-server-btn").addEventListener("click", async () => {
+  startServerButton.addEventListener("click", async () => {
+    startServerButton.disabled = true;
+    startServerButton.textContent = "サーバーを起動しています…";
+    serverStatusMessage.textContent = "BDSを起動しています。";
+
+    if (!serverLaunch) {
+      try {
+        serverLaunch = await invoke("start_server");
+      } catch (error) {
+        serverStatusMessage.textContent = `サーバーを起動できませんでした: ${error}`;
+        startServerButton.textContent = "サーバー起動";
+        startServerButton.disabled = false;
+        return;
+      }
+    }
+
+    startServerButton.textContent = "インターネットへ公開しています…";
+    serverStatusMessage.textContent =
+      "BDSを起動しました。Firewallと接続経路を設定しています。Windowsの確認画面が表示された場合は許可してください。";
+
     try {
-      const result = await invoke("start_server");
-      startServerMsgEl.textContent = `BDSを起動しました（PID ${result.pid}）。接続先: ${result.address}:${result.port}`;
-      publishButton.hidden = false;
-    } catch (error) { startServerMsgEl.textContent = String(error); }
-  });
-  publishButton.addEventListener("click", async () => {
-    publishButton.disabled = true;
-    publishMessage.textContent = "Firewallとルーターを設定しています。Windowsの確認画面を許可してください…";
-    try {
-      const result = await invoke("publish_server");
-      publishMessage.textContent = result.warning
-        ? `中央サーバーへ登録しました（ID: ${result.serverId}）。${result.warning}`
-        : `公開しました: ${result.publicAddress}（LAN: ${result.localAddress}）`;
+      const published = await invoke("publish_server");
+      serverStatusMessage.textContent = published.warning
+        ? `サーバーを公開しました（ID: ${published.serverId}）。${published.warning}`
+        : `サーバーを公開しました: ${published.publicAddress}（LAN: ${published.localAddress}）`;
+      startServerButton.textContent = "サーバー公開中";
     } catch (error) {
-      publishMessage.textContent = `公開できませんでした: ${error}`;
-      publishButton.disabled = false;
+      serverStatusMessage.textContent =
+        `BDSはローカルで起動中です（PID ${serverLaunch.pid} / ${serverLaunch.address}:${serverLaunch.port}）` +
+        `\nインターネットへ公開できませんでした: ${error}`;
+      startServerButton.textContent = "公開を再試行";
+      startServerButton.disabled = false;
     }
   });
 
