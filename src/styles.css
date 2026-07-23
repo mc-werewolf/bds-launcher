@@ -18,28 +18,89 @@
 }
 
 .container {
-  margin: 0;
-  padding-top: 10vh;
+  min-height: 100vh;
+  box-sizing: border-box;
+  margin: 0 auto;
+  padding: 8vh 24px;
   display: flex;
   flex-direction: column;
   justify-content: center;
+  align-items: center;
   text-align: center;
 }
 
-.app-update {
-  align-self: center;
-  width: min(680px, calc(100% - 40px));
+.brand {
+  margin: 0 0 24px;
+  font-size: 13px;
+  letter-spacing: .22em;
+  opacity: .65;
+}
+
+.panel {
+  width: min(680px, 100%);
   box-sizing: border-box;
-  margin-bottom: 24px;
-  padding: 16px;
-  border: 1px solid #74c69d;
-  border-radius: 12px;
+  padding: 32px;
+  border: 1px solid rgba(127, 127, 127, .22);
+  border-radius: 18px;
+  background: rgba(127, 127, 127, .07);
+}
+
+.panel[hidden] {
+  display: none;
+}
+
+.app-update {
+  border-color: #74c69d;
   background: rgba(116, 198, 157, 0.12);
 }
 
 .app-update p {
   margin: 6px 0 12px;
   white-space: pre-wrap;
+}
+
+.loading-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.spinner {
+  width: 40px;
+  height: 40px;
+  margin-bottom: 22px;
+  border: 4px solid rgba(116, 198, 157, .22);
+  border-top-color: #74c69d;
+  border-radius: 50%;
+  animation: spin .85s linear infinite;
+}
+
+.spinner[hidden] {
+  display: none;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.muted {
+  color: #888;
+  white-space: pre-wrap;
+}
+
+.eyebrow {
+  margin-bottom: 4px;
+  color: #74c69d;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .2em;
+}
+
+#server-details {
+  margin: 20px 0 26px;
+  color: #888;
+  font-family: inherit;
+  line-height: 1.7;
 }
 
 .logo {
@@ -69,6 +130,7 @@ a:hover {
 }
 
 h1 {
+  margin-top: 0;
   text-align: center;
 }
 
@@ -85,7 +147,7 @@ button {
   transition: border-color 0.25s;
   box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
 }
-.agreement { display: flex; align-items: flex-start; gap: 10px; margin: 20px 0; text-align: left; }
+.agreement { display: flex; align-items: flex-start; gap: 10px; margin: 24px 0; text-align: left; }
 .agreement input { margin-top: 4px; }
 .agreement a { color: #74c69d; }
 button:disabled { cursor: not-allowed; opacity: .45; }

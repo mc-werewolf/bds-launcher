@@ -1,31 +1,72 @@
 const { invoke } = window.__TAURI__.core;
+const EULA_AGREEMENT_KEY = "mc-werewolf:eula-agreed";
 
 window.addEventListener("DOMContentLoaded", () => {
   const appUpdateEl = document.querySelector("#app-update");
   const appUpdateTitleEl = document.querySelector("#app-update-title");
   const appUpdateMessageEl = document.querySelector("#app-update-message");
   const appUpdateButton = document.querySelector("#app-update-btn");
-  const updateStatusEl = document.querySelector("#update-status");
-  const updateDetailsEl = document.querySelector("#update-details");
-  const actionsEl = document.querySelector("#actions");
+  const onboardingScreen = document.querySelector("#onboarding-screen");
+  const loadingScreen = document.querySelector("#loading-screen");
+  const homeScreen = document.querySelector("#home-screen");
+  const loadingSpinner = document.querySelector("#loading-spinner");
+  const loadingTitle = document.querySelector("#loading-title");
+  const loadingMessage = document.querySelector("#loading-message");
+  const retryButton = document.querySelector("#retry-btn");
+  const serverDetails = document.querySelector("#server-details");
   const startServerMsgEl = document.querySelector("#start-server-msg");
   const publishButton = document.querySelector("#publish-server-btn");
   const publishMessage = document.querySelector("#publish-server-msg");
-  const prepareButton = document.querySelector("#prepare-btn");
+  const onboardingButton = document.querySelector("#onboarding-btn");
   const agreement = document.querySelector("#eula-agreement");
+
+  const showOnly = (screen) => {
+    [appUpdateEl, onboardingScreen, loadingScreen, homeScreen].forEach((element) => {
+      element.hidden = element !== screen;
+    });
+  };
 
   const checkAppUpdate = async () => {
     try {
       const update = await invoke("check_app_update");
-      if (!update) return;
+      if (!update) return false;
 
       appUpdateTitleEl.textContent = `ランチャー ${update.version} を利用できます`;
       appUpdateMessageEl.textContent =
         `現在のバージョン: ${update.currentVersion}` +
         (update.notes ? `\n${update.notes}` : "");
-      appUpdateEl.hidden = false;
+      showOnly(appUpdateEl);
+      return true;
     } catch (error) {
       console.warn("ランチャーの更新確認に失敗しました", error);
+      return false;
+    }
+  };
+
+  const prepareServer = async () => {
+    showOnly(loadingScreen);
+    loadingSpinner.hidden = false;
+    loadingTitle.textContent = "サーバーを準備しています";
+    loadingMessage.textContent =
+      "BDS、ワールド、アドオンの最新版を確認しています。\n初回は数分かかる場合があります。";
+    retryButton.hidden = true;
+
+    try {
+      const result = await invoke("prepare_server");
+      const updated = result.addons.filter((addon) => addon.updated).length;
+      serverDetails.textContent = [
+        `World: ${result.bds.worldName}`,
+        `BDS ${result.bds.version}`,
+        `Add-ons: ${result.addons.length}（${updated}件更新）`,
+        `Behavior Packs: ${result.bds.behaviorPacks}`,
+        `Resource Packs: ${result.bds.resourcePacks}`,
+      ].join("\n");
+      showOnly(homeScreen);
+    } catch (error) {
+      loadingSpinner.hidden = true;
+      loadingTitle.textContent = "準備できませんでした";
+      loadingMessage.textContent = String(error);
+      retryButton.hidden = false;
     }
   };
 
@@ -42,28 +83,19 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  void checkAppUpdate();
-
-  agreement.addEventListener("change", () => { prepareButton.disabled = !agreement.checked; });
-  prepareButton.addEventListener("click", async () => {
-    prepareButton.disabled = true;
-    updateStatusEl.textContent = "BDSとアドオンを準備しています…";
-    updateDetailsEl.textContent = "初回はBDS本体をダウンロードするため数分かかります。";
-    try {
-      const result = await invoke("prepare_server");
-      const updated = result.addons.filter((addon) => addon.updated).length;
-      updateStatusEl.textContent = `準備完了（アドオン${updated}件更新）`;
-      updateDetailsEl.textContent = result.addons
-        .map((addon) => `${addon.addonId} ${addon.version}${addon.updated ? " — 更新済み" : ""}`)
-        .concat([`BDS ${result.bds.version}${result.bds.updated ? " — 更新済み" : ""}`, `World: ${result.bds.worldName} / BP ${result.bds.behaviorPacks} / RP ${result.bds.resourcePacks}`])
-        .join("\n");
-      actionsEl.hidden = false;
-    } catch (error) {
-      updateStatusEl.textContent = "準備に失敗しました";
-      updateDetailsEl.textContent = String(error);
-      prepareButton.disabled = !agreement.checked;
-    }
+  agreement.addEventListener("change", () => {
+    onboardingButton.disabled = !agreement.checked;
   });
+
+  onboardingButton.addEventListener("click", () => {
+    localStorage.setItem(EULA_AGREEMENT_KEY, "true");
+    void prepareServer();
+  });
+
+  retryButton.addEventListener("click", () => {
+    void prepareServer();
+  });
+
   document.querySelector("#start-server-btn").addEventListener("click", async () => {
     try {
       const result = await invoke("start_server");
@@ -84,4 +116,20 @@ window.addEventListener("DOMContentLoaded", () => {
       publishButton.disabled = false;
     }
   });
+
+  const start = async () => {
+    showOnly(loadingScreen);
+    loadingTitle.textContent = "ランチャーを確認しています";
+    loadingMessage.textContent = "利用可能な更新を確認しています。";
+
+    if (await checkAppUpdate()) return;
+
+    if (localStorage.getItem(EULA_AGREEMENT_KEY) === "true") {
+      await prepareServer();
+    } else {
+      showOnly(onboardingScreen);
+    }
+  };
+
+  void start();
 });

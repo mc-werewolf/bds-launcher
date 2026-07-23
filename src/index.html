@@ -10,27 +10,42 @@
 
   <body>
     <main class="container">
-      <p>MC WEREWOLF</p>
-      <section id="app-update" class="app-update" hidden>
+      <p class="brand">MC WEREWOLF</p>
+
+      <section id="app-update" class="panel app-update" hidden>
         <strong id="app-update-title"></strong>
         <p id="app-update-message"></p>
         <button id="app-update-btn">今すぐ更新</button>
       </section>
-      <h1 id="update-status">BDSをセットアップ</h1>
-      <pre id="update-details" aria-live="polite"></pre>
 
-      <label class="agreement">
-        <input id="eula-agreement" type="checkbox" />
-        <span><a href="https://www.minecraft.net/eula" target="_blank">Minecraft EULA</a> と <a href="https://www.microsoft.com/privacy/privacystatement" target="_blank">プライバシーポリシー</a>に同意します</span>
-      </label>
-      <button id="prepare-btn" disabled>ダウンロードして準備</button>
+      <section id="onboarding-screen" class="panel" hidden>
+        <h1>はじめる前に</h1>
+        <p class="muted">BDSと人狼ワールドを準備するため、利用条件への同意が必要です。</p>
+        <label class="agreement">
+          <input id="eula-agreement" type="checkbox" />
+          <span><a href="https://www.minecraft.net/eula" target="_blank">Minecraft EULA</a> と <a href="https://www.microsoft.com/privacy/privacystatement" target="_blank">プライバシーポリシー</a>に同意します</span>
+        </label>
+        <button id="onboarding-btn" disabled>同意して開始</button>
+      </section>
 
-      <div class="row" id="actions" hidden>
+      <section id="loading-screen" class="panel loading-screen" hidden>
+        <div id="loading-spinner" class="spinner" aria-hidden="true"></div>
+        <h1 id="loading-title">サーバーを準備しています</h1>
+        <p id="loading-message" class="muted" aria-live="polite">
+          BDS、ワールド、アドオンの最新版を確認しています。
+        </p>
+        <button id="retry-btn" hidden>再試行</button>
+      </section>
+
+      <section id="home-screen" class="panel" hidden>
+        <p class="eyebrow">READY</p>
+        <h1>人狼サーバー</h1>
+        <pre id="server-details" aria-live="polite"></pre>
         <button id="start-server-btn">サーバー起動</button>
-      </div>
-      <p id="start-server-msg"></p>
-      <button id="publish-server-btn" hidden>インターネットへ公開</button>
-      <p id="publish-server-msg"></p>
+        <p id="start-server-msg"></p>
+        <button id="publish-server-btn" hidden>インターネットへ公開</button>
+        <p id="publish-server-msg"></p>
+      </section>
     </main>
   </body>
 </html>
