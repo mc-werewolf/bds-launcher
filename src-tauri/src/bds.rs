@@ -66,12 +66,20 @@ struct WorldRelease {
 #[derive(Debug, Deserialize)]
 struct PackManifest {
     header: PackHeader,
+    #[serde(default)]
+    modules: Vec<PackModule>,
 }
 #[derive(Debug, Deserialize)]
 struct PackHeader {
     uuid: String,
     #[serde(deserialize_with = "deserialize_pack_version")]
     version: Vec<u32>,
+}
+#[derive(Debug, Deserialize)]
+struct PackModule {
+    #[serde(rename = "type")]
+    module_type: String,
+    uuid: String,
 }
 #[derive(Debug, Clone, Serialize)]
 struct WorldPack {
@@ -167,6 +175,8 @@ pub async fn prepare_bds(install_root: &Path, addon_ids: &[String]) -> Result<Bd
     install_managed_world(&client, &current).await?;
     let (behavior_packs, resource_packs) = apply_addons(install_root, &current, addon_ids)
         .map_err(|error| format!("アドオンをBDSへ適用できませんでした: {error}"))?;
+    configure_bds_bridge(&current)
+        .map_err(|error| format!("BDS Bridgeを設定できませんでした: {error}"))?;
     ensure_server_properties(&current).map_err(|error| error.to_string())?;
     Ok(BdsStatus {
         version: version_from_url(&download_url),
@@ -301,7 +311,12 @@ fn install_bds(bytes: &[u8], current: &Path, download_url: &str) -> io::Result<(
     )?;
     if current.exists() {
         preserve_path(current, &staging, "worlds")?;
-        for file in ["server.properties", "allowlist.json", "permissions.json"] {
+        for file in [
+            "server.properties",
+            "allowlist.json",
+            "permissions.json",
+            "config",
+        ] {
             preserve_path(current, &staging, file)?;
         }
         fs::rename(current, &backup)?;
@@ -378,6 +393,49 @@ fn install_pack(source: &Path, target: &Path, packs: &mut Vec<WorldPack>) -> io:
         version: manifest.header.version,
     });
     Ok(())
+}
+
+fn configure_bds_bridge(bds_root: &Path) -> io::Result<()> {
+    let manifest_path = bds_root
+        .join("behavior_packs")
+        .join("werewolf-bds-bridge")
+        .join("manifest.json");
+    if !manifest_path.is_file() {
+        return Ok(());
+    }
+
+    let manifest: PackManifest = serde_json::from_slice(&fs::read(manifest_path)?)?;
+    let script_uuid = manifest
+        .modules
+        .iter()
+        .find(|module| module.module_type == "script")
+        .map(|module| module.uuid.trim())
+        .filter(|uuid| !uuid.is_empty())
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "BDS Bridge manifestにscript module UUIDがありません",
+            )
+        })?;
+    let config_root = bds_root.join("config").join(script_uuid);
+    fs::create_dir_all(&config_root)?;
+    write_json_atomic(
+        &config_root.join("permissions.json"),
+        &serde_json::json!({
+            "allowed_modules": [
+                "@minecraft/server",
+                "@minecraft/server-ui",
+                "@minecraft/server-admin",
+                "@minecraft/server-net"
+            ]
+        }),
+    )?;
+    write_json_atomic(
+        &config_root.join("variables.json"),
+        &serde_json::json!({
+            "mcWerewolfApiUrl": "https://mc-werewolf.com"
+        }),
+    )
 }
 
 fn ensure_server_properties(bds_root: &Path) -> io::Result<()> {
@@ -590,6 +648,38 @@ mod tests {
         assert!(configured.contains("level-name=Werewolf\n"));
         assert!(configured.contains("allow-list=false\n"));
         assert!(configured.contains("server-port=19132\n"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn grants_server_net_only_to_bds_bridge_module() {
+        let root = std::env::temp_dir().join(format!(
+            "bds-launcher-bridge-config-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let pack = root.join("behavior_packs").join("werewolf-bds-bridge");
+        fs::create_dir_all(&pack).unwrap();
+        fs::write(
+            pack.join("manifest.json"),
+            r#"{
+                "header": {"uuid": "pack-id", "version": [0, 1, 0]},
+                "modules": [
+                    {"type": "data", "uuid": "data-id"},
+                    {"type": "script", "uuid": "script-id"}
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        configure_bds_bridge(&root).unwrap();
+
+        let permissions =
+            fs::read_to_string(root.join("config/script-id/permissions.json")).unwrap();
+        let variables = fs::read_to_string(root.join("config/script-id/variables.json")).unwrap();
+        assert!(permissions.contains("@minecraft/server-net"));
+        assert!(variables.contains("https://mc-werewolf.com"));
+        assert!(!root.join("config/default/permissions.json").exists());
         let _ = fs::remove_dir_all(root);
     }
 }
