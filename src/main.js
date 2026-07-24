@@ -15,6 +15,8 @@ window.addEventListener("DOMContentLoaded", () => {
   const retryButton = document.querySelector("#retry-btn");
   const serverDetails = document.querySelector("#server-details");
   const startServerButton = document.querySelector("#start-server-btn");
+  const stopServerButton = document.querySelector("#stop-server-btn");
+  const restartServerButton = document.querySelector("#restart-server-btn");
   const serverStatusMessage = document.querySelector("#server-status-msg");
   const onboardingButton = document.querySelector("#onboarding-btn");
   const agreement = document.querySelector("#eula-agreement");
@@ -96,7 +98,14 @@ window.addEventListener("DOMContentLoaded", () => {
     void prepareServer();
   });
 
-  startServerButton.addEventListener("click", async () => {
+  const setRunningControls = (running) => {
+    stopServerButton.hidden = !running;
+    restartServerButton.hidden = !running;
+    stopServerButton.disabled = false;
+    restartServerButton.disabled = false;
+  };
+
+  const launchAndPublish = async () => {
     startServerButton.disabled = true;
     startServerButton.textContent = "サーバーを起動しています…";
     serverStatusMessage.textContent = "BDSを起動しています。";
@@ -112,6 +121,7 @@ window.addEventListener("DOMContentLoaded", () => {
       }
     }
 
+    setRunningControls(true);
     startServerButton.textContent = "インターネットへ公開しています…";
     serverStatusMessage.textContent =
       "BDSを起動しました。Firewallと接続経路を設定しています。Windowsの確認画面が表示された場合は許可してください。";
@@ -129,6 +139,50 @@ window.addEventListener("DOMContentLoaded", () => {
       startServerButton.textContent = "公開を再試行";
       startServerButton.disabled = false;
     }
+  };
+
+  const stopServer = async () => {
+    stopServerButton.disabled = true;
+    restartServerButton.disabled = true;
+    serverStatusMessage.textContent = "BDSを停止しています（ワールドを保存しています）…";
+
+    try {
+      await invoke("stop_server");
+    } catch (error) {
+      serverStatusMessage.textContent = `サーバーを停止できませんでした: ${error}`;
+      stopServerButton.disabled = false;
+      restartServerButton.disabled = false;
+      return false;
+    }
+
+    serverLaunch = null;
+    setRunningControls(false);
+    startServerButton.hidden = false;
+    startServerButton.disabled = false;
+    startServerButton.textContent = "サーバー起動";
+    serverStatusMessage.textContent = "BDSを停止しました。";
+    return true;
+  };
+
+  startServerButton.addEventListener("click", () => {
+    void launchAndPublish();
+  });
+
+  stopServerButton.addEventListener("click", () => {
+    void stopServer();
+  });
+
+  restartServerButton.addEventListener("click", async () => {
+    stopServerButton.disabled = true;
+    restartServerButton.disabled = true;
+    restartServerButton.textContent = "再起動しています…";
+
+    const stopped = await stopServer();
+    restartServerButton.textContent = "再起動";
+    if (!stopped) return;
+
+    await prepareServer();
+    void launchAndPublish();
   });
 
   const start = async () => {

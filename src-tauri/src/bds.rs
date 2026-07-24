@@ -8,6 +8,8 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::Mutex,
+    thread,
+    time::{Duration, Instant},
 };
 
 const DOWNLOAD_LINKS_URL: &str =
@@ -15,6 +17,7 @@ const DOWNLOAD_LINKS_URL: &str =
 const WORLD_NAME: &str = "Werewolf";
 const WORLD_METADATA_URL: &str = "https://mc-werewolf.com/api/world/latest";
 const MAX_BDS_EXPANDED_SIZE: u64 = 2 * 1024 * 1024 * 1024;
+const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_secs(30);
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -511,6 +514,51 @@ pub fn start_bds(install_root: &Path, process: &ServerProcess) -> Result<LaunchR
         port: server_port(&bds_root.join("server.properties")),
         world_name: WORLD_NAME.to_owned(),
     })
+}
+
+/// Stops the running BDS process, if any. Sends the "stop" console command
+/// over stdin so the server saves the world before exiting; if it hasn't
+/// exited within `GRACEFUL_STOP_TIMEOUT`, falls back to killing it.
+pub fn stop_bds(process: &ServerProcess) -> Result<(), String> {
+    let mut guard = process
+        .0
+        .lock()
+        .map_err(|_| "BDSプロセス状態を取得できませんでした")?;
+    let Some(child) = guard.as_mut() else {
+        return Err("BDSは起動していません".to_owned());
+    };
+    if child
+        .try_wait()
+        .map_err(|error| error.to_string())?
+        .is_some()
+    {
+        *guard = None;
+        return Err("BDSは起動していません".to_owned());
+    }
+
+    if let Some(stdin) = child.stdin.as_mut() {
+        let _ = stdin.write_all(b"stop\n");
+        let _ = stdin.flush();
+    }
+
+    let deadline = Instant::now() + GRACEFUL_STOP_TIMEOUT;
+    loop {
+        if child
+            .try_wait()
+            .map_err(|error| error.to_string())?
+            .is_some()
+        {
+            break;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            break;
+        }
+        thread::sleep(Duration::from_millis(200));
+    }
+    *guard = None;
+    Ok(())
 }
 
 fn server_port(path: &Path) -> u16 {

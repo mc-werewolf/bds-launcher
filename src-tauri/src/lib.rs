@@ -90,6 +90,11 @@ async fn publish_server(
     network::publish(state.inner().clone()).await
 }
 
+#[tauri::command]
+fn stop_server(process: tauri::State<'_, bds::ServerProcess>) -> Result<(), String> {
+    bds::stop_bds(&process)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -108,7 +113,8 @@ pub fn run() {
             install_app_update,
             prepare_server,
             start_server,
-            publish_server
+            publish_server,
+            stop_server
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
