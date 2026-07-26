@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 #[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
+use std::os::windows::{io::AsRawHandle, process::CommandExt};
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Cursor, Write},
@@ -13,10 +13,17 @@ use std::{
 };
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::{
-    Foundation::CloseHandle,
-    System::Threading::{
-        OpenProcess, QueryFullProcessImageNameW, TerminateProcess,
-        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
+    Foundation::{CloseHandle, HANDLE},
+    System::{
+        JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+            SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        },
+        Threading::{
+            OpenProcess, QueryFullProcessImageNameW, TerminateProcess,
+            PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
+        },
     },
 };
 
@@ -31,7 +38,38 @@ const PROCESS_RECORD_FILE: &str = ".bds-launcher-process.json";
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-pub struct ServerProcess(pub Mutex<Option<Child>>);
+struct ManagedChild {
+    child: Child,
+    #[cfg(target_os = "windows")]
+    _job: JobHandle,
+}
+
+impl std::ops::Deref for ManagedChild {
+    type Target = Child;
+    fn deref(&self) -> &Self::Target {
+        &self.child
+    }
+}
+impl std::ops::DerefMut for ManagedChild {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.child
+    }
+}
+
+#[cfg(target_os = "windows")]
+struct JobHandle(HANDLE);
+#[cfg(target_os = "windows")]
+unsafe impl Send for JobHandle {}
+#[cfg(target_os = "windows")]
+impl Drop for JobHandle {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = CloseHandle(self.0);
+        }
+    }
+}
+
+pub struct ServerProcess(Mutex<Option<ManagedChild>>);
 
 impl Default for ServerProcess {
     fn default() -> Self {
@@ -592,12 +630,27 @@ pub fn start_bds(install_root: &Path, process: &ServerProcess) -> Result<LaunchR
         .spawn()
         .map_err(|error| format!("BDSを起動できませんでした: {error}"))?;
     let pid = child.id();
+    #[cfg(target_os = "windows")]
+    let job = match assign_kill_on_close_job(&child) {
+        Ok(job) => job,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "BDSをWindows Job Objectへ登録できませんでした: {error}"
+            ));
+        }
+    };
     if let Err(error) = write_process_record(install_root, pid, &executable) {
         let _ = child.kill();
         let _ = child.wait();
         return Err(format!("BDSプロセス情報を保存できませんでした: {error}"));
     }
-    *guard = Some(child);
+    *guard = Some(ManagedChild {
+        child,
+        #[cfg(target_os = "windows")]
+        _job: job,
+    });
     Ok(LaunchResult {
         pid,
         address: "127.0.0.1".to_owned(),
@@ -682,6 +735,34 @@ fn read_process_record(root: &Path) -> Option<BdsProcessRecord> {
 }
 fn remove_process_record(root: &Path) {
     let _ = fs::remove_file(process_record_path(root));
+}
+#[cfg(target_os = "windows")]
+fn assign_kill_on_close_job(child: &Child) -> io::Result<JobHandle> {
+    unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        let mut information: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        information.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &information as *const _ as *const std::ffi::c_void,
+            std::mem::size_of_val(&information) as u32,
+        ) == 0
+        {
+            let error = io::Error::last_os_error();
+            let _ = CloseHandle(job);
+            return Err(error);
+        }
+        if AssignProcessToJobObject(job, child.as_raw_handle() as HANDLE) == 0 {
+            let error = io::Error::last_os_error();
+            let _ = CloseHandle(job);
+            return Err(error);
+        }
+        Ok(JobHandle(job))
+    }
 }
 fn same_process_path(left: &Path, right: &Path) -> bool {
     left.to_string_lossy()
@@ -927,5 +1008,24 @@ mod tests {
         assert!(variables.contains("https://mc-werewolf.com"));
         assert!(!root.join("config/default/permissions.json").exists());
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn job_object_kills_child_when_launcher_handle_closes() {
+        let mut command = Command::new("cmd.exe");
+        command
+            .args(["/C", "ping 127.0.0.1 -n 30 >nul"])
+            .creation_flags(CREATE_NO_WINDOW);
+        let mut child = command.spawn().unwrap();
+        let job = assign_kill_on_close_job(&child).unwrap();
+
+        drop(job);
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while child.try_wait().unwrap().is_none() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(50));
+        }
+        assert!(child.try_wait().unwrap().is_some());
     }
 }

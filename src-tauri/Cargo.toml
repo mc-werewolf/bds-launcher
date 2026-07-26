@@ -1,6 +1,6 @@
 [package]
 name = "bds-launcher"
-version = "0.1.12"
+version = "0.1.13"
 description = "Bedrock Dedicated Server launcher for the Werewolf project"
 authors = ["you"]
 edition = "2021"
@@ -31,4 +31,4 @@ igd-next = { version = "0.17", features = ["aio_tokio"] }
 tokio = { version = "1", features = ["time"] }
 tokio-tungstenite = { version = "0.30", features = ["native-tls"] }
 futures-util = "0.3"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_JobObjects", "Win32_System_Threading"] }
