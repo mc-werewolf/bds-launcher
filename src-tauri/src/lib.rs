@@ -45,17 +45,16 @@ async fn install_app_update(
         .map_err(|error| format!("更新情報を確認できませんでした: {error}"))?
         .ok_or_else(|| "利用可能な更新はありません。".to_owned())?;
 
+    let install_root = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("アプリデータディレクトリを取得できませんでした: {error}"))?;
+    bds::stop_bds(&install_root, &process, true)?;
+
     update
         .download_and_install(|_, _| {}, || {})
         .await
         .map_err(|error| format!("更新をインストールできませんでした: {error}"))?;
-
-    // BDS is a plain child process (no Windows job-object linkage), so it
-    // survives app.restart() as an orphan the next launcher instance has no
-    // handle to and therefore can't stop or detect. Stop it gracefully here
-    // while we still hold the handle; the next launch's prepare/start flow
-    // will bring it back up with whatever updated addons/config are due.
-    let _ = bds::stop_bds(&process);
 
     app.restart();
 }
@@ -101,8 +100,15 @@ async fn publish_server(
 }
 
 #[tauri::command]
-fn stop_server(process: tauri::State<'_, bds::ServerProcess>) -> Result<(), String> {
-    bds::stop_bds(&process)
+fn stop_server(
+    app: tauri::AppHandle,
+    process: tauri::State<'_, bds::ServerProcess>,
+) -> Result<(), String> {
+    let install_root = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("アプリデータディレクトリを取得できませんでした: {error}"))?;
+    bds::stop_bds(&install_root, &process, false)
 }
 
 #[tauri::command]

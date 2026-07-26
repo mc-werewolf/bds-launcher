@@ -11,6 +11,14 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::{
+    Foundation::CloseHandle,
+    System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, TerminateProcess,
+        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
+    },
+};
 
 const DOWNLOAD_LINKS_URL: &str =
     "https://net-secondary.web.minecraft-services.net/api/v1.0/download/links";
@@ -19,6 +27,7 @@ const WORLD_METADATA_URL: &str = "https://mc-werewolf.com/api/world/latest";
 const MAX_BDS_EXPANDED_SIZE: u64 = 2 * 1024 * 1024 * 1024;
 const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_secs(30);
 const SESSION_LOG_MARKER: &str = "[bds-launcher] BDS session starting";
+const PROCESS_RECORD_FILE: &str = ".bds-launcher-process.json";
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -59,6 +68,11 @@ struct DownloadLink {
 #[derive(Debug, Serialize, Deserialize)]
 struct InstalledBds {
     download_url: String,
+}
+#[derive(Debug, Serialize, Deserialize)]
+struct BdsProcessRecord {
+    pid: u32,
+    executable: String,
 }
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -547,6 +561,11 @@ pub fn start_bds(install_root: &Path, process: &ServerProcess) -> Result<LaunchR
         {
             return Err("BDSは既に起動しています".to_owned());
         }
+        *guard = None;
+        remove_process_record(install_root);
+    }
+    if orphaned_bds_running(install_root)? {
+        return Err("以前のBDSが残っています。先にサーバーを停止してください。".to_owned());
     }
     let bds_root = install_root.join("bds").join("current");
     let executable = bds_root.join("bedrock_server.exe");
@@ -561,7 +580,7 @@ pub fn start_bds(install_root: &Path, process: &ServerProcess) -> Result<LaunchR
     writeln!(log, "{SESSION_LOG_MARKER}").map_err(|error| error.to_string())?;
     log.flush().map_err(|error| error.to_string())?;
     let error_log = log.try_clone().map_err(|error| error.to_string())?;
-    let mut command = Command::new(executable);
+    let mut command = Command::new(&executable);
     command
         .current_dir(&bds_root)
         .stdin(Stdio::piped())
@@ -569,10 +588,15 @@ pub fn start_bds(install_root: &Path, process: &ServerProcess) -> Result<LaunchR
         .stderr(Stdio::from(error_log));
     #[cfg(target_os = "windows")]
     command.creation_flags(CREATE_NO_WINDOW);
-    let child = command
+    let mut child = command
         .spawn()
         .map_err(|error| format!("BDSを起動できませんでした: {error}"))?;
     let pid = child.id();
+    if let Err(error) = write_process_record(install_root, pid, &executable) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!("BDSプロセス情報を保存できませんでした: {error}"));
+    }
     *guard = Some(child);
     Ok(LaunchResult {
         pid,
@@ -585,12 +609,24 @@ pub fn start_bds(install_root: &Path, process: &ServerProcess) -> Result<LaunchR
 /// Stops the running BDS process, if any. Sends the "stop" console command
 /// over stdin so the server saves the world before exiting; if it hasn't
 /// exited within `GRACEFUL_STOP_TIMEOUT`, falls back to killing it.
-pub fn stop_bds(process: &ServerProcess) -> Result<(), String> {
+pub fn stop_bds(
+    install_root: &Path,
+    process: &ServerProcess,
+    allow_not_running: bool,
+) -> Result<(), String> {
     let mut guard = process
         .0
         .lock()
         .map_err(|_| "BDSプロセス状態を取得できませんでした")?;
     let Some(child) = guard.as_mut() else {
+        if terminate_orphaned_bds(install_root)? {
+            remove_process_record(install_root);
+            return Ok(());
+        }
+        if allow_not_running {
+            remove_process_record(install_root);
+            return Ok(());
+        }
         return Err("BDSは起動していません".to_owned());
     };
     if child
@@ -599,6 +635,7 @@ pub fn stop_bds(process: &ServerProcess) -> Result<(), String> {
         .is_some()
     {
         *guard = None;
+        remove_process_record(install_root);
         return Err("BDSは起動していません".to_owned());
     }
 
@@ -624,7 +661,100 @@ pub fn stop_bds(process: &ServerProcess) -> Result<(), String> {
         thread::sleep(Duration::from_millis(200));
     }
     *guard = None;
+    remove_process_record(install_root);
     Ok(())
+}
+
+fn process_record_path(root: &Path) -> PathBuf {
+    root.join("bds").join(PROCESS_RECORD_FILE)
+}
+fn write_process_record(root: &Path, pid: u32, executable: &Path) -> io::Result<()> {
+    write_json_atomic(
+        &process_record_path(root),
+        &BdsProcessRecord {
+            pid,
+            executable: executable.to_string_lossy().into_owned(),
+        },
+    )
+}
+fn read_process_record(root: &Path) -> Option<BdsProcessRecord> {
+    serde_json::from_slice(&fs::read(process_record_path(root)).ok()?).ok()
+}
+fn remove_process_record(root: &Path) {
+    let _ = fs::remove_file(process_record_path(root));
+}
+fn same_process_path(left: &Path, right: &Path) -> bool {
+    left.to_string_lossy()
+        .eq_ignore_ascii_case(&right.to_string_lossy())
+}
+fn orphaned_bds_running(root: &Path) -> Result<bool, String> {
+    let Some(record) = read_process_record(root) else {
+        return Ok(false);
+    };
+    match process_executable(record.pid).map_err(|error| error.to_string())? {
+        Some(path) if same_process_path(&path, Path::new(&record.executable)) => Ok(true),
+        _ => {
+            remove_process_record(root);
+            Ok(false)
+        }
+    }
+}
+fn terminate_orphaned_bds(root: &Path) -> Result<bool, String> {
+    let Some(record) = read_process_record(root) else {
+        return Ok(false);
+    };
+    let Some(path) = process_executable(record.pid).map_err(|error| error.to_string())? else {
+        remove_process_record(root);
+        return Ok(false);
+    };
+    if !same_process_path(&path, Path::new(&record.executable)) {
+        remove_process_record(root);
+        return Ok(false);
+    }
+    terminate_process(record.pid)
+        .map_err(|error| format!("残存BDSを終了できませんでした: {error}"))?;
+    Ok(true)
+}
+#[cfg(target_os = "windows")]
+fn process_executable(pid: u32) -> io::Result<Option<PathBuf>> {
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return Ok(None);
+        }
+        let mut buffer = vec![0_u16; 32768];
+        let mut length = buffer.len() as u32;
+        let result = QueryFullProcessImageNameW(handle, 0, buffer.as_mut_ptr(), &mut length);
+        let _ = CloseHandle(handle);
+        if result == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        buffer.truncate(length as usize);
+        Ok(Some(PathBuf::from(String::from_utf16_lossy(&buffer))))
+    }
+}
+#[cfg(not(target_os = "windows"))]
+fn process_executable(_pid: u32) -> io::Result<Option<PathBuf>> {
+    Ok(None)
+}
+#[cfg(target_os = "windows")]
+fn terminate_process(pid: u32) -> io::Result<()> {
+    unsafe {
+        let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
+        if handle.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        let result = TerminateProcess(handle, 0);
+        let _ = CloseHandle(handle);
+        if result == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+}
+#[cfg(not(target_os = "windows"))]
+fn terminate_process(_pid: u32) -> io::Result<()> {
+    Err(io::Error::new(io::ErrorKind::Unsupported, "Windows only"))
 }
 
 fn server_port(path: &Path) -> u16 {
