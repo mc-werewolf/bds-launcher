@@ -100,6 +100,7 @@ pub async fn update_addons(
             .is_some_and(|installed| {
                 installed.version == release.version && installed.sha256 == release.sha256
             })
+            && has_normalized_pack_layout(&target)
         {
             results.push(UpdateResult {
                 addon_id: addon.id,
@@ -164,6 +165,12 @@ fn installed_version(target: &Path) -> Option<InstalledVersion> {
     serde_json::from_slice(&fs::read(target.join(".kairo-version.json")).ok()?).ok()
 }
 
+fn has_normalized_pack_layout(target: &Path) -> bool {
+    ["BP", "RP"]
+        .iter()
+        .any(|name| target.join(name).join("manifest.json").is_file())
+}
+
 fn verify_archive(bytes: &[u8], release: &RegistryVersion) -> Result<(), String> {
     if bytes.len() as u64 != release.file_size {
         return Err(format!(
@@ -198,6 +205,10 @@ fn install_archive(bytes: &[u8], target: &Path, release: &RegistryVersion) -> io
         let _ = remove_if_exists(&staging);
         return Err(error);
     }
+    if let Err(error) = normalize_pack_layout(&staging) {
+        let _ = remove_if_exists(&staging);
+        return Err(error);
+    }
     fs::write(
         staging.join(".kairo-version.json"),
         serde_json::to_vec_pretty(&InstalledVersion {
@@ -215,6 +226,57 @@ fn install_archive(bytes: &[u8], target: &Path, release: &RegistryVersion) -> io
         return Err(error);
     }
     remove_if_exists(&backup)
+}
+
+fn normalize_pack_layout(staging: &Path) -> io::Result<()> {
+    let mut pack_count = 0;
+    for (directory_name, archive_suffix) in [("BP", "-bp.zip"), ("RP", "-rp.zip")] {
+        let directory = staging.join(directory_name);
+        if !directory.is_dir() {
+            let archives = fs::read_dir(staging)?
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|path| {
+                    path.is_file()
+                        && path
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| name.to_ascii_lowercase().ends_with(archive_suffix))
+                })
+                .collect::<Vec<_>>();
+            match archives.as_slice() {
+                [] => {}
+                [archive] => {
+                    fs::create_dir_all(&directory)?;
+                    let bytes = fs::read(archive)?;
+                    extract_zip(&bytes, &directory)?;
+                    fs::remove_file(archive)?;
+                }
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("multiple nested {directory_name} archives found"),
+                    ));
+                }
+            }
+        }
+        if directory.is_dir() {
+            if !directory.join("manifest.json").is_file() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("{directory_name}/manifest.json is missing"),
+                ));
+            }
+            pack_count += 1;
+        }
+    }
+    if pack_count == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "archive contains neither a BP nor an RP pack",
+        ));
+    }
+    Ok(())
 }
 
 fn extract_zip(bytes: &[u8], destination: &Path) -> io::Result<()> {
@@ -271,6 +333,22 @@ fn remove_if_exists(path: &PathBuf) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+
+    fn zip_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        {
+            let mut archive = zip::ZipWriter::new(Cursor::new(&mut bytes));
+            for (name, content) in entries {
+                archive
+                    .start_file(*name, zip::write::SimpleFileOptions::default())
+                    .unwrap();
+                archive.write_all(content).unwrap();
+            }
+            archive.finish().unwrap();
+        }
+        bytes
+    }
 
     #[test]
     fn resolves_relative_registry_urls() {
@@ -284,5 +362,67 @@ mod tests {
     fn rejects_unsafe_addon_ids() {
         assert!(validate_addon_id("game-manager").is_ok());
         assert!(validate_addon_id("../escape").is_err());
+    }
+
+    #[test]
+    fn normalizes_nested_github_release_packs() {
+        let root = std::env::temp_dir().join(format!(
+            "bds-launcher-nested-pack-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let manifest = br#"{"header":{"uuid":"pack-id","version":[1,0,0]}}"#;
+        fs::write(
+            root.join("werewolf-test-v1.0.0-BP.zip"),
+            zip_bytes(&[("manifest.json", manifest)]),
+        )
+        .unwrap();
+        fs::write(
+            root.join("werewolf-test-v1.0.0-RP.zip"),
+            zip_bytes(&[("manifest.json", manifest)]),
+        )
+        .unwrap();
+
+        normalize_pack_layout(&root).unwrap();
+
+        assert!(root.join("BP/manifest.json").is_file());
+        assert!(root.join("RP/manifest.json").is_file());
+        assert!(!root.join("werewolf-test-v1.0.0-BP.zip").exists());
+        assert!(!root.join("werewolf-test-v1.0.0-RP.zip").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rejects_archives_without_a_pack() {
+        let root = std::env::temp_dir().join(format!(
+            "bds-launcher-empty-pack-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("readme.txt"), "not a pack").unwrap();
+
+        let error = normalize_pack_layout(&root).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn detects_cache_that_still_contains_nested_archives() {
+        let root = std::env::temp_dir().join(format!(
+            "bds-launcher-cache-layout-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("werewolf-test-v1.0.0-BP.zip"), "nested").unwrap();
+        assert!(!has_normalized_pack_layout(&root));
+
+        fs::create_dir_all(root.join("BP")).unwrap();
+        fs::write(root.join("BP/manifest.json"), "{}").unwrap();
+        assert!(has_normalized_pack_layout(&root));
+        let _ = fs::remove_dir_all(root);
     }
 }

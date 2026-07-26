@@ -366,16 +366,22 @@ fn apply_addons(
     let mut resources = Vec::new();
     for addon_id in addon_ids {
         let addon = install_root.join("addons").join(addon_id);
-        install_pack(
+        let behavior_installed = install_pack(
             &addon.join("BP"),
             &bds_root.join("behavior_packs").join(addon_id),
             &mut behavior,
         )?;
-        install_pack(
+        let resource_installed = install_pack(
             &addon.join("RP"),
             &bds_root.join("resource_packs").join(addon_id),
             &mut resources,
         )?;
+        if !behavior_installed && !resource_installed {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("{addon_id}にBPまたはRPがありません"),
+            ));
+        }
     }
     let world = bds_root.join("worlds").join(WORLD_NAME);
     fs::create_dir_all(&world)?;
@@ -384,9 +390,9 @@ fn apply_addons(
     Ok((behavior.len(), resources.len()))
 }
 
-fn install_pack(source: &Path, target: &Path, packs: &mut Vec<WorldPack>) -> io::Result<()> {
+fn install_pack(source: &Path, target: &Path, packs: &mut Vec<WorldPack>) -> io::Result<bool> {
     if !source.is_dir() {
-        return Ok(());
+        return Ok(false);
     }
     let manifest: PackManifest = serde_json::from_slice(&fs::read(source.join("manifest.json"))?)?;
     if manifest.header.version.len() != 3 || manifest.header.uuid.trim().is_empty() {
@@ -403,7 +409,7 @@ fn install_pack(source: &Path, target: &Path, packs: &mut Vec<WorldPack>) -> io:
         pack_id: manifest.header.uuid,
         version: manifest.header.version,
     });
-    Ok(())
+    Ok(true)
 }
 
 fn configure_bds_bridge(bds_root: &Path) -> io::Result<()> {
