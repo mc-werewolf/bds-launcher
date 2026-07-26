@@ -105,6 +105,15 @@ fn stop_server(process: tauri::State<'_, bds::ServerProcess>) -> Result<(), Stri
     bds::stop_bds(&process)
 }
 
+#[tauri::command]
+fn bridge_status(app: tauri::AppHandle) -> Result<bds::BridgeRuntimeStatus, String> {
+    let install_root = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("アプリデータディレクトリを取得できませんでした: {error}"))?;
+    Ok(bds::bridge_runtime_status(&install_root))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -124,7 +133,8 @@ pub fn run() {
             prepare_server,
             start_server,
             publish_server,
-            stop_server
+            stop_server,
+            bridge_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

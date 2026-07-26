@@ -21,6 +21,7 @@ window.addEventListener("DOMContentLoaded", () => {
   const onboardingButton = document.querySelector("#onboarding-btn");
   const agreement = document.querySelector("#eula-agreement");
   let serverLaunch = null;
+  let bridgeStatusTimer = null;
 
   const showOnly = (screen) => {
     [appUpdateEl, onboardingScreen, loadingScreen, homeScreen].forEach((element) => {
@@ -105,6 +106,32 @@ window.addEventListener("DOMContentLoaded", () => {
     restartServerButton.disabled = false;
   };
 
+  const stopBridgeStatusPolling = () => {
+    if (bridgeStatusTimer !== null) {
+      window.clearInterval(bridgeStatusTimer);
+      bridgeStatusTimer = null;
+    }
+  };
+
+  const startBridgeStatusPolling = () => {
+    stopBridgeStatusPolling();
+    const updateBridgeStatus = async () => {
+      try {
+        const bridge = await invoke("bridge_status");
+        serverDetails.dataset.bridgeStatus = bridge.state;
+        const baseDetails = serverDetails.textContent
+          .split("\n")
+          .filter((line) => !line.startsWith("Bridge:"))
+          .join("\n");
+        serverDetails.textContent = `${baseDetails}\nBridge: ${bridge.message}`;
+      } catch (error) {
+        console.warn("Bridgeの状態を取得できませんでした", error);
+      }
+    };
+    void updateBridgeStatus();
+    bridgeStatusTimer = window.setInterval(updateBridgeStatus, 3000);
+  };
+
   const launchAndPublish = async () => {
     startServerButton.disabled = true;
     startServerButton.textContent = "サーバーを起動しています…";
@@ -122,6 +149,7 @@ window.addEventListener("DOMContentLoaded", () => {
     }
 
     setRunningControls(true);
+    startBridgeStatusPolling();
     startServerButton.textContent = "インターネットへ公開しています…";
     serverStatusMessage.textContent =
       "BDSを起動しました。Firewallと接続経路を設定しています。Windowsの確認画面が表示された場合は許可してください。";
@@ -156,6 +184,7 @@ window.addEventListener("DOMContentLoaded", () => {
     }
 
     serverLaunch = null;
+    stopBridgeStatusPolling();
     setRunningControls(false);
     startServerButton.hidden = false;
     startServerButton.disabled = false;

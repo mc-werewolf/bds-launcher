@@ -18,6 +18,7 @@ const WORLD_NAME: &str = "Werewolf";
 const WORLD_METADATA_URL: &str = "https://mc-werewolf.com/api/world/latest";
 const MAX_BDS_EXPANDED_SIZE: u64 = 2 * 1024 * 1024 * 1024;
 const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_secs(30);
+const SESSION_LOG_MARKER: &str = "[bds-launcher] BDS session starting";
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -127,6 +128,13 @@ pub struct LaunchResult {
     pub address: String,
     pub port: u16,
     pub world_name: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BridgeRuntimeStatus {
+    pub state: String,
+    pub message: String,
 }
 
 pub async fn prepare_bds(install_root: &Path, addon_ids: &[String]) -> Result<BdsStatus, String> {
@@ -446,6 +454,8 @@ fn ensure_server_properties(bds_root: &Path) -> io::Result<()> {
     let content = fs::read_to_string(&path).unwrap_or_default();
     let mut level_name_found = false;
     let mut allow_list_found = false;
+    let mut content_log_console_found = false;
+    let mut content_log_file_found = false;
     let mut output = String::new();
     for line in content.lines() {
         if line.starts_with("level-name=") {
@@ -456,6 +466,12 @@ fn ensure_server_properties(bds_root: &Path) -> io::Result<()> {
             // an operator has had a chance to populate allowlist.json.
             output.push_str("allow-list=false\n");
             allow_list_found = true;
+        } else if line.starts_with("content-log-console-output-enabled=") {
+            output.push_str("content-log-console-output-enabled=true\n");
+            content_log_console_found = true;
+        } else if line.starts_with("content-log-file-enabled=") {
+            output.push_str("content-log-file-enabled=true\n");
+            content_log_file_found = true;
         } else {
             output.push_str(line);
             output.push('\n');
@@ -467,7 +483,49 @@ fn ensure_server_properties(bds_root: &Path) -> io::Result<()> {
     if !allow_list_found {
         output.push_str("allow-list=false\n");
     }
+    if !content_log_console_found {
+        output.push_str("content-log-console-output-enabled=true\n");
+    }
+    if !content_log_file_found {
+        output.push_str("content-log-file-enabled=true\n");
+    }
     fs::write(path, output)
+}
+
+pub fn bridge_runtime_status(install_root: &Path) -> BridgeRuntimeStatus {
+    let log_path = install_root
+        .join("bds")
+        .join("current")
+        .join("bedrock_server.log");
+    let Ok(content) = fs::read_to_string(log_path) else {
+        return BridgeRuntimeStatus {
+            state: "waiting".to_owned(),
+            message: "Bridgeの起動を待っています。".to_owned(),
+        };
+    };
+
+    for line in content.lines().rev() {
+        if let Some(message) = line.split("[werewolf-bds-bridge] Connected to ").nth(1) {
+            return BridgeRuntimeStatus {
+                state: "connected".to_owned(),
+                message: format!("Bridge接続済み: {}", message.trim()),
+            };
+        }
+        if let Some(message) = line.split("[werewolf-bds-bridge] Disconnected: ").nth(1) {
+            return BridgeRuntimeStatus {
+                state: "disconnected".to_owned(),
+                message: format!("Bridge未接続: {}", message.trim()),
+            };
+        }
+        if line.contains(SESSION_LOG_MARKER) {
+            break;
+        }
+    }
+
+    BridgeRuntimeStatus {
+        state: "waiting".to_owned(),
+        message: "Bridgeを初期化しています。".to_owned(),
+    }
 }
 
 pub fn start_bds(install_root: &Path, process: &ServerProcess) -> Result<LaunchResult, String> {
@@ -489,11 +547,13 @@ pub fn start_bds(install_root: &Path, process: &ServerProcess) -> Result<LaunchR
     if !executable.is_file() {
         return Err("BDSが準備されていません".to_owned());
     }
-    let log = OpenOptions::new()
+    let mut log = OpenOptions::new()
         .create(true)
         .append(true)
         .open(bds_root.join("bedrock_server.log"))
         .map_err(|error| error.to_string())?;
+    writeln!(log, "{SESSION_LOG_MARKER}").map_err(|error| error.to_string())?;
+    log.flush().map_err(|error| error.to_string())?;
     let error_log = log.try_clone().map_err(|error| error.to_string())?;
     let mut command = Command::new(executable);
     command
@@ -696,6 +756,8 @@ mod tests {
         assert!(configured.contains("level-name=Werewolf\n"));
         assert!(configured.contains("allow-list=false\n"));
         assert!(configured.contains("server-port=19132\n"));
+        assert!(configured.contains("content-log-console-output-enabled=true\n"));
+        assert!(configured.contains("content-log-file-enabled=true\n"));
         let _ = fs::remove_dir_all(root);
     }
 
