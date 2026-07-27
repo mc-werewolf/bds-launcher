@@ -1,6 +1,6 @@
 [package]
 name = "bds-launcher"
-version = "0.1.16"
+version = "0.1.17"
 description = "Bedrock Dedicated Server launcher for the Werewolf project"
 authors = ["you"]
 edition = "2021"

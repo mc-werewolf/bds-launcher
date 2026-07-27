@@ -1,10 +1,12 @@
 use futures_util::{SinkExt, StreamExt};
 use igd_next::{aio::tokio::search_gateway, PortMappingProtocol, SearchOptions};
 use serde::{Deserialize, Serialize};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
-    process::Command,
+    process::{Command, Stdio},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -16,6 +18,8 @@ use tokio_tungstenite::{
 
 const BDS_PORT: u16 = 19132;
 const DIRECTORY_URL: &str = "https://mc-werewolf.com/api/network/v1/servers";
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Clone, Default)]
 pub struct NetworkState(Arc<Mutex<Option<Session>>>);
@@ -385,11 +389,15 @@ fn request_firewall_rule() -> Result<bool, String> {
         "advfirewall firewall add rule name=\"Werewolf BDS UDP {BDS_PORT}\" dir=in action=allow protocol=UDP localport={BDS_PORT}"
     );
     let script = format!(
-        "Start-Process -FilePath netsh.exe -Verb RunAs -ArgumentList '{}' -Wait",
+        "Start-Process -FilePath netsh.exe -Verb RunAs -WindowStyle Hidden -ArgumentList '{}' -Wait",
         arguments.replace('\'', "''")
     );
     let success = Command::new("powershell.exe")
         .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .map_err(|error| format!("Firewall設定を開始できませんでした: {error}"))?
         .success();
