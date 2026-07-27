@@ -18,10 +18,19 @@ window.addEventListener("DOMContentLoaded", () => {
   const stopServerButton = document.querySelector("#stop-server-btn");
   const restartServerButton = document.querySelector("#restart-server-btn");
   const serverStatusMessage = document.querySelector("#server-status-msg");
+  const serverState = document.querySelector("#server-state");
+  const consoleOutput = document.querySelector("#console-output");
+  const consoleForm = document.querySelector("#console-form");
+  const consoleCommand = document.querySelector("#console-command");
+  const consoleSend = document.querySelector("#console-send");
+  const consoleLive = document.querySelector("#console-live");
+  const consoleError = document.querySelector("#console-error");
   const onboardingButton = document.querySelector("#onboarding-btn");
   const agreement = document.querySelector("#eula-agreement");
   let serverLaunch = null;
   let bridgeStatusTimer = null;
+  let consoleTimer = null;
+  let lastConsoleOutput = "";
 
   const showOnly = (screen) => {
     [appUpdateEl, onboardingScreen, loadingScreen, homeScreen].forEach((element) => {
@@ -65,6 +74,7 @@ window.addEventListener("DOMContentLoaded", () => {
         `Resource Packs: ${result.bds.resourcePacks}`,
       ].join("\n");
       showOnly(homeScreen);
+      startConsolePolling();
     } catch (error) {
       loadingSpinner.hidden = true;
       loadingTitle.textContent = "準備できませんでした";
@@ -104,6 +114,44 @@ window.addEventListener("DOMContentLoaded", () => {
     restartServerButton.hidden = !running;
     stopServerButton.disabled = false;
     restartServerButton.disabled = false;
+    consoleCommand.disabled = !running;
+    consoleSend.disabled = !running;
+    consoleLive.textContent = running ? "LIVE" : "OFFLINE";
+    consoleLive.classList.toggle("is-live", running);
+    serverState.textContent = running ? "稼働中" : "停止中";
+    serverState.classList.toggle("is-running", running);
+  };
+
+  const refreshConsole = async () => {
+    try {
+      const snapshot = await invoke("server_console");
+      setRunningControls(snapshot.running);
+      if (!snapshot.running && serverLaunch) {
+        serverLaunch = null;
+        stopBridgeStatusPolling();
+        startServerButton.disabled = false;
+        startServerButton.textContent = "サーバー起動";
+        serverStatusMessage.textContent = "BDSプロセスが終了しました。";
+      }
+      if (snapshot.output !== lastConsoleOutput) {
+        const wasNearBottom =
+          consoleOutput.scrollHeight - consoleOutput.scrollTop - consoleOutput.clientHeight < 56;
+        lastConsoleOutput = snapshot.output;
+        consoleOutput.textContent =
+          snapshot.output || "サーバーを起動すると、ここにログが表示されます。";
+        if (wasNearBottom) {
+          consoleOutput.scrollTop = consoleOutput.scrollHeight;
+        }
+      }
+    } catch (error) {
+      consoleError.textContent = `ログを取得できませんでした: ${error}`;
+    }
+  };
+
+  const startConsolePolling = () => {
+    if (consoleTimer !== null) return;
+    void refreshConsole();
+    consoleTimer = window.setInterval(refreshConsole, 750);
   };
 
   const stopBridgeStatusPolling = () => {
@@ -149,6 +197,7 @@ window.addEventListener("DOMContentLoaded", () => {
     }
 
     setRunningControls(true);
+    startConsolePolling();
     startBridgeStatusPolling();
     startServerButton.textContent = "インターネットへ公開しています…";
     serverStatusMessage.textContent =
@@ -193,6 +242,25 @@ window.addEventListener("DOMContentLoaded", () => {
     return true;
   };
 
+  consoleForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const command = consoleCommand.value.trim();
+    if (!command) return;
+
+    consoleSend.disabled = true;
+    consoleError.textContent = "";
+    try {
+      await invoke("send_server_command", { command });
+      consoleCommand.value = "";
+      await refreshConsole();
+      consoleCommand.focus();
+    } catch (error) {
+      consoleError.textContent = String(error);
+    } finally {
+      consoleSend.disabled = false;
+    }
+  });
+
   startServerButton.addEventListener("click", () => {
     void launchAndPublish();
   });
@@ -223,6 +291,7 @@ window.addEventListener("DOMContentLoaded", () => {
 
     if (localStorage.getItem(EULA_AGREEMENT_KEY) === "true") {
       await prepareServer();
+      startConsolePolling();
     } else {
       showOnly(onboardingScreen);
     }

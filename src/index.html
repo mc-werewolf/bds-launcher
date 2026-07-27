@@ -10,7 +10,7 @@
 
   <body>
     <main class="container">
-      <p class="brand">MC WEREWOLF</p>
+      <p class="brand"><span class="brand-block"></span> MC WEREWOLF</p>
 
       <section id="app-update" class="panel app-update" hidden>
         <strong id="app-update-title"></strong>
@@ -38,13 +38,45 @@
       </section>
 
       <section id="home-screen" class="panel" hidden>
-        <p class="eyebrow">READY</p>
-        <h1>人狼サーバー</h1>
+        <header class="server-header">
+          <div>
+            <p class="eyebrow">SERVER CONTROL</p>
+            <h1>人狼サーバー</h1>
+          </div>
+          <span id="server-state" class="state-badge">停止中</span>
+        </header>
         <pre id="server-details" aria-live="polite"></pre>
-        <button id="start-server-btn">サーバー起動</button>
-        <button id="stop-server-btn" hidden>サーバー停止</button>
-        <button id="restart-server-btn" hidden>再起動</button>
+        <div class="server-actions">
+          <button id="start-server-btn" class="primary">サーバー起動</button>
+          <button id="stop-server-btn" class="danger" hidden>サーバー停止</button>
+          <button id="restart-server-btn" class="secondary" hidden>再起動</button>
+        </div>
         <p id="server-status-msg" aria-live="polite"></p>
+
+        <section class="console" aria-label="BDSコンソール">
+          <div class="console-header">
+            <div>
+              <p class="console-kicker">BDS CONSOLE</p>
+              <h2>サーバーログ</h2>
+            </div>
+            <span id="console-live" class="console-live">OFFLINE</span>
+          </div>
+          <pre id="console-output" tabindex="0" aria-live="polite">サーバーを起動すると、ここにログが表示されます。</pre>
+          <form id="console-form" class="command-row">
+            <span aria-hidden="true">&gt;</span>
+            <input
+              id="console-command"
+              type="text"
+              placeholder="例: list"
+              aria-label="BDSへ送信するコマンド"
+              autocomplete="off"
+              spellcheck="false"
+              disabled
+            />
+            <button id="console-send" type="submit" disabled>送信</button>
+          </form>
+          <p id="console-error" class="console-error" aria-live="polite"></p>
+        </section>
       </section>
     </main>
   </body>

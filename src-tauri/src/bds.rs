@@ -4,7 +4,7 @@ use sha2::Digest;
 use std::os::windows::{io::AsRawHandle, process::CommandExt};
 use std::{
     fs::{self, File, OpenOptions},
-    io::{self, Cursor, Write},
+    io::{self, Cursor, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::Mutex,
@@ -35,6 +35,7 @@ const MAX_BDS_EXPANDED_SIZE: u64 = 2 * 1024 * 1024 * 1024;
 const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_secs(30);
 const SESSION_LOG_MARKER: &str = "[bds-launcher] BDS session starting";
 const PROCESS_RECORD_FILE: &str = ".bds-launcher-process.json";
+const CONSOLE_LOG_BYTES: u64 = 128 * 1024;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -187,6 +188,13 @@ pub struct LaunchResult {
 pub struct BridgeRuntimeStatus {
     pub state: String,
     pub message: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsoleSnapshot {
+    pub output: String,
+    pub running: bool,
 }
 
 pub async fn prepare_bds(install_root: &Path, addon_ids: &[String]) -> Result<BdsStatus, String> {
@@ -656,6 +664,100 @@ pub fn start_bds(install_root: &Path, process: &ServerProcess) -> Result<LaunchR
         address: "127.0.0.1".to_owned(),
         port: server_port(&bds_root.join("server.properties")),
         world_name: WORLD_NAME.to_owned(),
+    })
+}
+
+pub fn console_snapshot(
+    install_root: &Path,
+    process: &ServerProcess,
+) -> Result<ConsoleSnapshot, String> {
+    let running = {
+        let mut guard = process
+            .0
+            .lock()
+            .map_err(|_| "BDSプロセス状態を取得できませんでした")?;
+        match guard.as_mut() {
+            Some(child) => child
+                .try_wait()
+                .map_err(|error| error.to_string())?
+                .is_none(),
+            None => orphaned_bds_running(install_root)?,
+        }
+    };
+    let log_path = install_root
+        .join("bds")
+        .join("current")
+        .join("bedrock_server.log");
+    let output = read_file_tail(&log_path, CONSOLE_LOG_BYTES)
+        .unwrap_or_default()
+        .rsplit_once(SESSION_LOG_MARKER)
+        .map_or_else(String::new, |(_, current_session)| {
+            current_session.trim_start_matches(['\r', '\n']).to_owned()
+        });
+    Ok(ConsoleSnapshot { output, running })
+}
+
+pub fn send_command(
+    install_root: &Path,
+    process: &ServerProcess,
+    command: &str,
+) -> Result<(), String> {
+    let command = command.trim().trim_start_matches('/').trim();
+    if command.is_empty() {
+        return Err("コマンドを入力してください".to_owned());
+    }
+    if command.eq_ignore_ascii_case("stop") {
+        return Err("停止には「サーバー停止」ボタンを使用してください".to_owned());
+    }
+    if command.contains(['\r', '\n']) {
+        return Err("コマンドは1行で入力してください".to_owned());
+    }
+
+    let mut guard = process
+        .0
+        .lock()
+        .map_err(|_| "BDSプロセス状態を取得できませんでした")?;
+    let child = guard
+        .as_mut()
+        .ok_or_else(|| "BDSは起動していません".to_owned())?;
+    if child
+        .try_wait()
+        .map_err(|error| error.to_string())?
+        .is_some()
+    {
+        return Err("BDSは起動していません".to_owned());
+    }
+    let stdin = child
+        .stdin
+        .as_mut()
+        .ok_or_else(|| "BDSの標準入力を利用できません".to_owned())?;
+    let log_path = install_root
+        .join("bds")
+        .join("current")
+        .join("bedrock_server.log");
+    if let Ok(mut log) = OpenOptions::new().create(true).append(true).open(log_path) {
+        let _ = writeln!(log, "[bds-launcher] > {command}");
+    }
+    writeln!(stdin, "{command}")
+        .map_err(|error| format!("コマンドを送信できませんでした: {error}"))?;
+    stdin
+        .flush()
+        .map_err(|error| format!("コマンドを送信できませんでした: {error}"))
+}
+
+fn read_file_tail(path: &Path, max_bytes: u64) -> io::Result<String> {
+    let mut file = File::open(path)?;
+    let length = file.metadata()?.len();
+    file.seek(SeekFrom::Start(length.saturating_sub(max_bytes)))?;
+    let mut bytes = Vec::with_capacity(length.min(max_bytes) as usize);
+    file.read_to_end(&mut bytes)?;
+    let output = String::from_utf8_lossy(&bytes);
+    Ok(if length > max_bytes {
+        output
+            .split_once('\n')
+            .map_or_else(String::new, |(_, remainder)| remainder.to_owned())
+    } else {
+        output.into_owned()
     })
 }
 
