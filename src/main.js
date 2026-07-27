@@ -7,6 +7,7 @@ window.addEventListener("DOMContentLoaded", () => {
   const appUpdateTitleEl = document.querySelector("#app-update-title");
   const appUpdateMessageEl = document.querySelector("#app-update-message");
   const appUpdateButton = document.querySelector("#app-update-btn");
+  const appUpdateLaterButton = document.querySelector("#app-update-later-btn");
   const onboardingScreen = document.querySelector("#onboarding-screen");
   const loadingScreen = document.querySelector("#loading-screen");
   const launcherHomeScreen = document.querySelector("#launcher-home-screen");
@@ -40,6 +41,7 @@ window.addEventListener("DOMContentLoaded", () => {
   let consoleTimer = null;
   let appUpdateTimer = null;
   let pendingAppUpdate = null;
+  let dismissedUpdateVersion = null;
   let selectedAddons = optionalAddonInputs.filter((input) => input.checked).map((input) => input.value);
   let lastConsoleOutput = "";
 
@@ -56,32 +58,51 @@ window.addEventListener("DOMContentLoaded", () => {
   };
 
   const renderAppUpdate = () => {
-    if (!pendingAppUpdate) {
+    if (!pendingAppUpdate || pendingAppUpdate.version === dismissedUpdateVersion) {
       appUpdateEl.hidden = true;
       return;
     }
     appUpdateEl.hidden = false;
-    appUpdateTitleEl.textContent = `ランチャー ${pendingAppUpdate.version} をダウンロード済み`;
-    appUpdateMessageEl.textContent = serverLaunch
-      ? "サーバーはそのまま稼働します。停止後に自動で更新します。"
-      : "サーバー停止中のため、更新を適用できます。";
-    appUpdateButton.disabled = Boolean(serverLaunch);
-    appUpdateButton.textContent = serverLaunch ? "停止後に自動更新" : "更新を適用";
+    if (pendingAppUpdate.downloaded) {
+      appUpdateTitleEl.textContent = `ランチャー ${pendingAppUpdate.version} をダウンロード済み`;
+      appUpdateMessageEl.textContent = serverLaunch
+        ? "サーバーはそのまま稼働します。停止後に自動で更新します。"
+        : "サーバー停止中のため、更新を適用できます。";
+      appUpdateButton.disabled = Boolean(serverLaunch);
+      appUpdateButton.textContent = serverLaunch ? "停止後に自動更新" : "更新を適用";
+      appUpdateLaterButton.hidden = true;
+    } else {
+      appUpdateTitleEl.textContent = `ランチャー ${pendingAppUpdate.version} を利用できます`;
+      appUpdateMessageEl.textContent = "更新をダウンロードしますか？ 後から更新しても、そのまま利用できます。";
+      appUpdateButton.disabled = false;
+      appUpdateButton.textContent = "ダウンロード";
+      appUpdateLaterButton.hidden = false;
+    }
   };
 
-  const stageAppUpdate = async () => {
+  const checkAppUpdate = async () => {
     try {
-      pendingAppUpdate = await invoke("stage_app_update");
+      pendingAppUpdate = await invoke("check_app_update");
       renderAppUpdate();
     } catch (error) {
-      console.warn("ランチャーのバックグラウンド更新に失敗しました", error);
+      console.warn("ランチャーの更新確認に失敗しました", error);
     }
   };
 
   const scheduleAppUpdateChecks = () => {
-    void stageAppUpdate();
+    void checkAppUpdate();
     if (appUpdateTimer !== null) return;
-    appUpdateTimer = window.setInterval(stageAppUpdate, APP_UPDATE_INTERVAL_MS);
+    appUpdateTimer = window.setInterval(checkAppUpdate, APP_UPDATE_INTERVAL_MS);
+  };
+
+  const downloadAppUpdate = async () => {
+    appUpdateButton.disabled = true;
+    appUpdateLaterButton.disabled = true;
+    appUpdateButton.textContent = "ダウンロード中…";
+    appUpdateMessageEl.textContent = "署名を確認し、安全な更新として保存しています。";
+    pendingAppUpdate = await invoke("download_app_update");
+    appUpdateLaterButton.disabled = false;
+    renderAppUpdate();
   };
 
   const applyAppUpdate = async () => {
@@ -122,12 +143,22 @@ window.addEventListener("DOMContentLoaded", () => {
 
   appUpdateButton.addEventListener("click", async () => {
     try {
-      await applyAppUpdate();
+      if (pendingAppUpdate?.downloaded) {
+        await applyAppUpdate();
+      } else {
+        await downloadAppUpdate();
+      }
     } catch (error) {
       appUpdateMessageEl.textContent = String(error);
       appUpdateButton.disabled = false;
       appUpdateButton.textContent = "再試行";
+      appUpdateLaterButton.disabled = false;
     }
+  });
+
+  appUpdateLaterButton.addEventListener("click", () => {
+    dismissedUpdateVersion = pendingAppUpdate?.version ?? null;
+    renderAppUpdate();
   });
 
   agreement.addEventListener("change", () => {
@@ -295,7 +326,7 @@ window.addEventListener("DOMContentLoaded", () => {
     startServerButton.disabled = false;
     startServerButton.textContent = "サーバー起動";
     serverStatusMessage.textContent = "BDSを停止しました。";
-    if (pendingAppUpdate) {
+    if (pendingAppUpdate?.downloaded) {
       serverStatusMessage.textContent = "BDSを停止しました。ランチャーを更新しています…";
       try {
         await applyAppUpdate();

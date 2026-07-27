@@ -25,6 +25,8 @@ struct AppUpdate {
     current_version: String,
     version: String,
     notes: Option<String>,
+    #[serde(default)]
+    downloaded: bool,
 }
 
 #[derive(Default)]
@@ -48,12 +50,33 @@ fn pending_app_update(app: tauri::AppHandle) -> Result<Option<AppUpdate>, String
     }
     Ok(Some(AppUpdate {
         current_version,
+        downloaded: true,
         ..metadata
     }))
 }
 
 #[tauri::command]
-async fn stage_app_update(
+async fn check_app_update(app: tauri::AppHandle) -> Result<Option<AppUpdate>, String> {
+    if let Some(pending) = pending_app_update(app.clone())? {
+        return Ok(Some(pending));
+    }
+    let current_version = app.package_info().version.to_string();
+    let update = app
+        .updater()
+        .map_err(|error| format!("更新機能を初期化できませんでした: {error}"))?
+        .check()
+        .await
+        .map_err(|error| format!("更新情報を確認できませんでした: {error}"))?;
+    Ok(update.map(|update| AppUpdate {
+        current_version,
+        version: update.version.to_string(),
+        notes: update.body,
+        downloaded: false,
+    }))
+}
+
+#[tauri::command]
+async fn download_app_update(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppUpdateState>,
 ) -> Result<Option<AppUpdate>, String> {
@@ -77,6 +100,7 @@ async fn stage_app_update(
         current_version,
         version: update.version.to_string(),
         notes: update.body.clone(),
+        downloaded: true,
     };
     let package = update
         .download(|_, _| {}, || {})
@@ -266,7 +290,8 @@ pub fn run() {
         .manage(AppUpdateState::default())
         .invoke_handler(tauri::generate_handler![
             pending_app_update,
-            stage_app_update,
+            check_app_update,
+            download_app_update,
             install_app_update,
             prepare_server,
             start_server,

@@ -102,6 +102,16 @@ body {
   font-size: 12px;
 }
 
+.update-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 10px;
+}
+
+.update-actions button[hidden] {
+  display: none;
+}
+
 .loading-screen {
   display: flex;
   flex-direction: column;
