@@ -1,5 +1,6 @@
 const { invoke } = window.__TAURI__.core;
 const EULA_AGREEMENT_KEY = "mc-werewolf:eula-agreed";
+const APP_UPDATE_INTERVAL_MS = 15 * 60 * 1000;
 
 window.addEventListener("DOMContentLoaded", () => {
   const appUpdateEl = document.querySelector("#app-update");
@@ -30,29 +31,50 @@ window.addEventListener("DOMContentLoaded", () => {
   let serverLaunch = null;
   let bridgeStatusTimer = null;
   let consoleTimer = null;
+  let appUpdateTimer = null;
+  let pendingAppUpdate = null;
   let lastConsoleOutput = "";
 
   const showOnly = (screen) => {
-    [appUpdateEl, onboardingScreen, loadingScreen, homeScreen].forEach((element) => {
+    [onboardingScreen, loadingScreen, homeScreen].forEach((element) => {
       element.hidden = element !== screen;
     });
   };
 
-  const checkAppUpdate = async () => {
-    try {
-      const update = await invoke("check_app_update");
-      if (!update) return false;
-
-      appUpdateTitleEl.textContent = `ランチャー ${update.version} を利用できます`;
-      appUpdateMessageEl.textContent =
-        `現在のバージョン: ${update.currentVersion}` +
-        (update.notes ? `\n${update.notes}` : "");
-      showOnly(appUpdateEl);
-      return true;
-    } catch (error) {
-      console.warn("ランチャーの更新確認に失敗しました", error);
-      return false;
+  const renderAppUpdate = () => {
+    if (!pendingAppUpdate) {
+      appUpdateEl.hidden = true;
+      return;
     }
+    appUpdateEl.hidden = false;
+    appUpdateTitleEl.textContent = `ランチャー ${pendingAppUpdate.version} をダウンロード済み`;
+    appUpdateMessageEl.textContent = serverLaunch
+      ? "サーバーはそのまま稼働します。停止後に自動で更新します。"
+      : "サーバー停止中のため、更新を適用できます。";
+    appUpdateButton.disabled = Boolean(serverLaunch);
+    appUpdateButton.textContent = serverLaunch ? "停止後に自動更新" : "更新を適用";
+  };
+
+  const stageAppUpdate = async () => {
+    try {
+      pendingAppUpdate = await invoke("stage_app_update");
+      renderAppUpdate();
+    } catch (error) {
+      console.warn("ランチャーのバックグラウンド更新に失敗しました", error);
+    }
+  };
+
+  const scheduleAppUpdateChecks = () => {
+    void stageAppUpdate();
+    if (appUpdateTimer !== null) return;
+    appUpdateTimer = window.setInterval(stageAppUpdate, APP_UPDATE_INTERVAL_MS);
+  };
+
+  const applyAppUpdate = async () => {
+    appUpdateButton.disabled = true;
+    appUpdateButton.textContent = "更新を適用しています…";
+    appUpdateMessageEl.textContent = "ランチャーを再起動します。";
+    await invoke("install_app_update");
   };
 
   const prepareServer = async () => {
@@ -75,6 +97,7 @@ window.addEventListener("DOMContentLoaded", () => {
       ].join("\n");
       showOnly(homeScreen);
       startConsolePolling();
+      scheduleAppUpdateChecks();
     } catch (error) {
       loadingSpinner.hidden = true;
       loadingTitle.textContent = "準備できませんでした";
@@ -84,15 +107,12 @@ window.addEventListener("DOMContentLoaded", () => {
   };
 
   appUpdateButton.addEventListener("click", async () => {
-    appUpdateButton.disabled = true;
-    appUpdateButton.textContent = "更新をダウンロードしています…";
-    appUpdateMessageEl.textContent = "完了後、ランチャーを再起動します。";
     try {
-      await invoke("install_app_update");
+      await applyAppUpdate();
     } catch (error) {
       appUpdateMessageEl.textContent = String(error);
-      appUpdateButton.textContent = "再試行";
       appUpdateButton.disabled = false;
+      appUpdateButton.textContent = "再試行";
     }
   });
 
@@ -120,6 +140,7 @@ window.addEventListener("DOMContentLoaded", () => {
     consoleLive.classList.toggle("is-live", running);
     serverState.textContent = running ? "稼働中" : "停止中";
     serverState.classList.toggle("is-running", running);
+    renderAppUpdate();
   };
 
   const refreshConsole = async () => {
@@ -239,6 +260,15 @@ window.addEventListener("DOMContentLoaded", () => {
     startServerButton.disabled = false;
     startServerButton.textContent = "サーバー起動";
     serverStatusMessage.textContent = "BDSを停止しました。";
+    if (pendingAppUpdate) {
+      serverStatusMessage.textContent = "BDSを停止しました。ランチャーを更新しています…";
+      try {
+        await applyAppUpdate();
+      } catch (error) {
+        serverStatusMessage.textContent = `BDSを停止しました。更新を適用できませんでした: ${error}`;
+        renderAppUpdate();
+      }
+    }
     return true;
   };
 
@@ -285,9 +315,19 @@ window.addEventListener("DOMContentLoaded", () => {
   const start = async () => {
     showOnly(loadingScreen);
     loadingTitle.textContent = "ランチャーを確認しています";
-    loadingMessage.textContent = "利用可能な更新を確認しています。";
+    loadingMessage.textContent = "適用待ちの更新を確認しています。";
 
-    if (await checkAppUpdate()) return;
+    try {
+      pendingAppUpdate = await invoke("pending_app_update");
+      if (pendingAppUpdate) {
+        loadingTitle.textContent = "ランチャーを更新しています";
+        loadingMessage.textContent = `${pendingAppUpdate.version} を適用しています。`;
+        await invoke("install_app_update");
+        return;
+      }
+    } catch (error) {
+      console.warn("適用待ちの更新を処理できませんでした", error);
+    }
 
     if (localStorage.getItem(EULA_AGREEMENT_KEY) === "true") {
       await prepareServer();

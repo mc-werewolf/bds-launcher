@@ -76,12 +76,30 @@ body {
 }
 
 .app-update {
-  border-color: var(--green);
+  margin-bottom: 24px;
+  padding: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border: 2px solid var(--green);
+  background: #173016;
+  box-shadow: inset 4px 0 0 var(--green-light);
+}
+
+.app-update[hidden] {
+  display: none;
 }
 
 .app-update p,
 #server-status-msg {
   white-space: pre-wrap;
+}
+
+.app-update p {
+  margin: 3px 0 0;
+  color: #c7d9c1;
+  font-size: 12px;
 }
 
 .loading-screen {

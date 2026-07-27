@@ -6,8 +6,11 @@ use tauri::Manager;
 use tauri_plugin_updater::UpdaterExt;
 
 const LAUNCHER_CONFIG_URL: &str = "https://mc-werewolf.com/api/launcher/v1/config";
+const PENDING_UPDATE_DIR: &str = "pending-update";
+const PENDING_UPDATE_PACKAGE: &str = "package.bin";
+const PENDING_UPDATE_METADATA: &str = "metadata.json";
 
-#[derive(serde::Serialize)]
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AppUpdate {
     current_version: String,
@@ -15,8 +18,41 @@ struct AppUpdate {
     notes: Option<String>,
 }
 
+#[derive(Default)]
+struct AppUpdateState(tokio::sync::Mutex<()>);
+
 #[tauri::command]
-async fn check_app_update(app: tauri::AppHandle) -> Result<Option<AppUpdate>, String> {
+fn pending_app_update(app: tauri::AppHandle) -> Result<Option<AppUpdate>, String> {
+    let current_version = app.package_info().version.to_string();
+    let update_root = pending_update_root(&app)?;
+    let metadata_path = update_root.join(PENDING_UPDATE_METADATA);
+    let package_path = update_root.join(PENDING_UPDATE_PACKAGE);
+    let Some(metadata) = std::fs::read(&metadata_path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<AppUpdate>(&bytes).ok())
+    else {
+        return Ok(None);
+    };
+    if metadata.version == current_version || !package_path.is_file() {
+        let _ = std::fs::remove_dir_all(update_root);
+        return Ok(None);
+    }
+    Ok(Some(AppUpdate {
+        current_version,
+        ..metadata
+    }))
+}
+
+#[tauri::command]
+async fn stage_app_update(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppUpdateState>,
+) -> Result<Option<AppUpdate>, String> {
+    let _guard = state.0.lock().await;
+    if let Some(pending) = pending_app_update(app.clone())? {
+        return Ok(Some(pending));
+    }
+
     let current_version = app.package_info().version.to_string();
     let update = app
         .updater()
@@ -25,11 +61,37 @@ async fn check_app_update(app: tauri::AppHandle) -> Result<Option<AppUpdate>, St
         .await
         .map_err(|error| format!("更新情報を確認できませんでした: {error}"))?;
 
-    Ok(update.map(|update| AppUpdate {
+    let Some(update) = update else {
+        return Ok(None);
+    };
+    let metadata = AppUpdate {
         current_version,
         version: update.version.to_string(),
-        notes: update.body,
-    }))
+        notes: update.body.clone(),
+    };
+    let package = update
+        .download(|_, _| {}, || {})
+        .await
+        .map_err(|error| format!("更新をダウンロードできませんでした: {error}"))?;
+    let update_root = pending_update_root(&app)?;
+    std::fs::create_dir_all(&update_root)
+        .map_err(|error| format!("更新保存先を作成できませんでした: {error}"))?;
+    let package_path = update_root.join(PENDING_UPDATE_PACKAGE);
+    let package_staging = update_root.join("package.tmp");
+    std::fs::write(&package_staging, package)
+        .map_err(|error| format!("更新を保存できませんでした: {error}"))?;
+    if package_path.exists() {
+        std::fs::remove_file(&package_path)
+            .map_err(|error| format!("古い更新を削除できませんでした: {error}"))?;
+    }
+    std::fs::rename(package_staging, package_path)
+        .map_err(|error| format!("更新を確定できませんでした: {error}"))?;
+    std::fs::write(
+        update_root.join(PENDING_UPDATE_METADATA),
+        serde_json::to_vec_pretty(&metadata).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("更新情報を保存できませんでした: {error}"))?;
+    Ok(Some(metadata))
 }
 
 #[tauri::command]
@@ -37,6 +99,15 @@ async fn install_app_update(
     app: tauri::AppHandle,
     process: tauri::State<'_, bds::ServerProcess>,
 ) -> Result<(), String> {
+    let install_root = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("アプリデータディレクトリを取得できませんでした: {error}"))?;
+    if bds::console_snapshot(&install_root, &process)?.running {
+        return Err("サーバー稼働中です。停止後に更新を適用します。".to_owned());
+    }
+    let pending = pending_app_update(app.clone())?
+        .ok_or_else(|| "適用待ちの更新はありません。".to_owned())?;
     let update = app
         .updater()
         .map_err(|error| format!("更新機能を初期化できませんでした: {error}"))?
@@ -44,19 +115,25 @@ async fn install_app_update(
         .await
         .map_err(|error| format!("更新情報を確認できませんでした: {error}"))?
         .ok_or_else(|| "利用可能な更新はありません。".to_owned())?;
-
-    let install_root = app
-        .path()
-        .app_data_dir()
-        .map_err(|error| format!("アプリデータディレクトリを取得できませんでした: {error}"))?;
-    bds::stop_bds(&install_root, &process, true)?;
-
+    if update.version.to_string() != pending.version {
+        let _ = std::fs::remove_dir_all(pending_update_root(&app)?);
+        return Err("ダウンロード済みの更新が最新版と一致しません。".to_owned());
+    }
+    let update_root = pending_update_root(&app)?;
+    let package = std::fs::read(update_root.join(PENDING_UPDATE_PACKAGE))
+        .map_err(|error| format!("ダウンロード済み更新を読み込めませんでした: {error}"))?;
     update
-        .download_and_install(|_, _| {}, || {})
-        .await
+        .install(package)
         .map_err(|error| format!("更新をインストールできませんでした: {error}"))?;
-
+    let _ = std::fs::remove_dir_all(update_root);
     app.restart();
+}
+
+fn pending_update_root(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|path| path.join(PENDING_UPDATE_DIR))
+        .map_err(|error| format!("アプリデータディレクトリを取得できませんでした: {error}"))
 }
 
 #[tauri::command]
@@ -158,8 +235,10 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(bds::ServerProcess::default())
         .manage(network::NetworkState::default())
+        .manage(AppUpdateState::default())
         .invoke_handler(tauri::generate_handler![
-            check_app_update,
+            pending_app_update,
+            stage_app_update,
             install_app_update,
             prepare_server,
             start_server,

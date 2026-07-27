@@ -12,12 +12,6 @@
     <main class="container">
       <p class="brand"><span class="brand-block"></span> MC WEREWOLF</p>
 
-      <section id="app-update" class="panel app-update" hidden>
-        <strong id="app-update-title"></strong>
-        <p id="app-update-message"></p>
-        <button id="app-update-btn">今すぐ更新</button>
-      </section>
-
       <section id="onboarding-screen" class="panel" hidden>
         <h1>はじめる前に</h1>
         <p class="muted">BDSと人狼ワールドを準備するため、利用条件への同意が必要です。</p>
@@ -38,6 +32,13 @@
       </section>
 
       <section id="home-screen" class="panel" hidden>
+        <aside id="app-update" class="app-update" hidden>
+          <div>
+            <strong id="app-update-title"></strong>
+            <p id="app-update-message"></p>
+          </div>
+          <button id="app-update-btn">更新を適用</button>
+        </aside>
         <header class="server-header">
           <div>
             <p class="eyebrow">SERVER CONTROL</p>
