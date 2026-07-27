@@ -61,6 +61,7 @@ struct InstalledVersion {
 pub async fn update_addons(
     config_url: &str,
     install_root: &Path,
+    enabled_addons: &[String],
 ) -> Result<Vec<UpdateResult>, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
@@ -80,7 +81,11 @@ pub async fn update_addons(
     let addons_root = install_root.join("addons");
     fs::create_dir_all(&addons_root).map_err(|error| error.to_string())?;
     let mut results = Vec::with_capacity(config.addons.len());
-    for addon in config.addons {
+    for addon in config
+        .addons
+        .into_iter()
+        .filter(|addon| enabled_addons.contains(&addon.id))
+    {
         validate_addon_id(&addon.id)?;
         let latest_url = absolute_url(&config.registry_url, &addon.latest_version_url);
         let release = client
@@ -130,6 +135,13 @@ pub async fn update_addons(
             required: addon.required,
             updated: true,
         });
+    }
+    if let Some(missing) = enabled_addons.iter().find(|id| {
+        !results
+            .iter()
+            .any(|result| result.addon_id() == id.as_str())
+    }) {
+        return Err(format!("ランチャー構成に{missing}がありません"));
     }
     Ok(results)
 }

@@ -9,6 +9,15 @@ const LAUNCHER_CONFIG_URL: &str = "https://mc-werewolf.com/api/launcher/v1/confi
 const PENDING_UPDATE_DIR: &str = "pending-update";
 const PENDING_UPDATE_PACKAGE: &str = "package.bin";
 const PENDING_UPDATE_METADATA: &str = "metadata.json";
+const REQUIRED_WEREWOLF_ADDONS: &[&str] = &[
+    "kairo",
+    "kairo-database",
+    "werewolf-gamemanager",
+    "werewolf-vanillapack",
+    "werewolf-bds-bridge",
+];
+const OPTIONAL_WEREWOLF_ADDONS: &[&str] =
+    &["werewolf-additionalroles-1", "werewolf-additionalroles-4"];
 
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -137,12 +146,31 @@ fn pending_update_root(app: &tauri::AppHandle) -> Result<std::path::PathBuf, Str
 }
 
 #[tauri::command]
-async fn prepare_server(app: tauri::AppHandle) -> Result<PrepareResult, String> {
+async fn prepare_server(
+    app: tauri::AppHandle,
+    selected_addons: Vec<String>,
+) -> Result<PrepareResult, String> {
+    let unknown = selected_addons
+        .iter()
+        .find(|id| !OPTIONAL_WEREWOLF_ADDONS.contains(&id.as_str()));
+    if let Some(id) = unknown {
+        return Err(format!("選択できないアドオンです: {id}"));
+    }
+    let mut enabled_addons = REQUIRED_WEREWOLF_ADDONS
+        .iter()
+        .map(|id| (*id).to_owned())
+        .collect::<Vec<_>>();
+    for id in selected_addons {
+        if !enabled_addons.contains(&id) {
+            enabled_addons.push(id);
+        }
+    }
     let install_root = app
         .path()
         .app_data_dir()
         .map_err(|error| format!("アプリデータディレクトリを取得できませんでした: {error}"))?;
-    let addons = updater::update_addons(LAUNCHER_CONFIG_URL, &install_root).await?;
+    let addons =
+        updater::update_addons(LAUNCHER_CONFIG_URL, &install_root, &enabled_addons).await?;
     let addon_ids = addons
         .iter()
         .map(|result| result.addon_id().to_owned())

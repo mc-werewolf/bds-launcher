@@ -12,6 +12,14 @@
     <main class="container">
       <p class="brand"><span class="brand-block"></span> MC WEREWOLF</p>
 
+      <aside id="app-update" class="app-update" hidden>
+        <div>
+          <strong id="app-update-title"></strong>
+          <p id="app-update-message"></p>
+        </div>
+        <button id="app-update-btn">更新を適用</button>
+      </aside>
+
       <section id="onboarding-screen" class="panel" hidden>
         <h1>はじめる前に</h1>
         <p class="muted">BDSと人狼ワールドを準備するため、利用条件への同意が必要です。</p>
@@ -31,14 +39,102 @@
         <button id="retry-btn" hidden>再試行</button>
       </section>
 
-      <section id="home-screen" class="panel" hidden>
-        <aside id="app-update" class="app-update" hidden>
-          <div>
-            <strong id="app-update-title"></strong>
-            <p id="app-update-message"></p>
+      <section id="launcher-home-screen" class="panel" hidden>
+        <header class="page-header">
+          <p class="eyebrow">CREATE A SERVER</p>
+          <h1>サーバーを選ぶ</h1>
+          <p class="muted">遊びたいワールドに合わせて、サーバーの構成を選択してください。</p>
+        </header>
+        <div class="server-type-list">
+          <button id="select-werewolf-btn" class="server-type-card" type="button">
+            <span class="server-type-icon" aria-hidden="true">🐺</span>
+            <span class="server-type-copy">
+              <strong>人狼サーバーを作成</strong>
+              <small>公式ワールドと人狼アドオンを使って、すぐにゲームを始めます。</small>
+            </span>
+            <span class="card-arrow" aria-hidden="true">›</span>
+          </button>
+          <button class="server-type-card is-upcoming" type="button" disabled>
+            <span class="server-type-icon" aria-hidden="true">🌍</span>
+            <span class="server-type-copy">
+              <strong>カスタムサーバーを作成</strong>
+              <small>手持ちのワールドとアドオンを組み合わせてサーバーを構築します。</small>
+            </span>
+            <span class="coming-soon">準備中</span>
+          </button>
+        </div>
+      </section>
+
+      <section id="addon-selection-screen" class="panel" hidden>
+        <header class="page-header">
+          <p class="eyebrow">WEREWOLF ADD-ONS</p>
+          <h1>アドオン構成</h1>
+          <p class="muted">基本機能は常に導入されます。追加したい役職セットを選択してください。</p>
+        </header>
+
+        <div class="addon-group">
+          <div class="group-heading">
+            <h2>基本アドオン</h2>
+            <span class="required-label">必須</span>
           </div>
-          <button id="app-update-btn">更新を適用</button>
-        </aside>
+          <div class="addon-list">
+            <label class="addon-option is-required">
+              <input type="checkbox" checked disabled />
+              <span><strong>Kairo</strong><small>アドオン間通信の基盤</small></span>
+            </label>
+            <label class="addon-option is-required">
+              <input type="checkbox" checked disabled />
+              <span><strong>Kairo Database</strong><small>ゲームデータの保存基盤</small></span>
+            </label>
+            <label class="addon-option is-required">
+              <input type="checkbox" checked disabled />
+              <span><strong>Game Manager</strong><small>人狼ゲームの進行管理</small></span>
+            </label>
+            <label class="addon-option is-required">
+              <input type="checkbox" checked disabled />
+              <span><strong>Vanilla Pack</strong><small>標準の人狼ルールとコンテンツ</small></span>
+            </label>
+            <label class="addon-option is-required">
+              <input type="checkbox" checked disabled />
+              <span><strong>BDS Bridge</strong><small>BDSと人狼サービスの接続</small></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="addon-group">
+          <div class="group-heading">
+            <h2>追加役職</h2>
+            <span class="optional-label">任意</span>
+          </div>
+          <div class="addon-list">
+            <label class="addon-option">
+              <input
+                class="optional-addon"
+                type="checkbox"
+                value="werewolf-additionalroles-1"
+                checked
+              />
+              <span><strong>Additional Roles 1</strong><small>追加役職セット I</small></span>
+            </label>
+            <label class="addon-option">
+              <input
+                class="optional-addon"
+                type="checkbox"
+                value="werewolf-additionalroles-4"
+                checked
+              />
+              <span><strong>Additional Roles 4</strong><small>追加役職セット IV</small></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="wizard-actions">
+          <button id="addons-back-btn" class="secondary" type="button">戻る</button>
+          <button id="confirm-addons-btn" class="primary" type="button">この構成で準備する</button>
+        </div>
+      </section>
+
+      <section id="server-screen" class="panel" hidden>
         <header class="server-header">
           <div>
             <p class="eyebrow">SERVER CONTROL</p>
@@ -48,6 +144,7 @@
         </header>
         <pre id="server-details" aria-live="polite"></pre>
         <div class="server-actions">
+          <button id="change-addons-btn" class="secondary">構成を変更</button>
           <button id="start-server-btn" class="primary">サーバー起動</button>
           <button id="stop-server-btn" class="danger" hidden>サーバー停止</button>
           <button id="restart-server-btn" class="secondary" hidden>再起動</button>

@@ -9,7 +9,14 @@ window.addEventListener("DOMContentLoaded", () => {
   const appUpdateButton = document.querySelector("#app-update-btn");
   const onboardingScreen = document.querySelector("#onboarding-screen");
   const loadingScreen = document.querySelector("#loading-screen");
-  const homeScreen = document.querySelector("#home-screen");
+  const launcherHomeScreen = document.querySelector("#launcher-home-screen");
+  const addonSelectionScreen = document.querySelector("#addon-selection-screen");
+  const serverScreen = document.querySelector("#server-screen");
+  const selectWerewolfButton = document.querySelector("#select-werewolf-btn");
+  const addonsBackButton = document.querySelector("#addons-back-btn");
+  const confirmAddonsButton = document.querySelector("#confirm-addons-btn");
+  const changeAddonsButton = document.querySelector("#change-addons-btn");
+  const optionalAddonInputs = [...document.querySelectorAll(".optional-addon")];
   const loadingSpinner = document.querySelector("#loading-spinner");
   const loadingTitle = document.querySelector("#loading-title");
   const loadingMessage = document.querySelector("#loading-message");
@@ -33,10 +40,17 @@ window.addEventListener("DOMContentLoaded", () => {
   let consoleTimer = null;
   let appUpdateTimer = null;
   let pendingAppUpdate = null;
+  let selectedAddons = optionalAddonInputs.filter((input) => input.checked).map((input) => input.value);
   let lastConsoleOutput = "";
 
   const showOnly = (screen) => {
-    [onboardingScreen, loadingScreen, homeScreen].forEach((element) => {
+    [
+      onboardingScreen,
+      loadingScreen,
+      launcherHomeScreen,
+      addonSelectionScreen,
+      serverScreen,
+    ].forEach((element) => {
       element.hidden = element !== screen;
     });
   };
@@ -86,7 +100,7 @@ window.addEventListener("DOMContentLoaded", () => {
     retryButton.hidden = true;
 
     try {
-      const result = await invoke("prepare_server");
+      const result = await invoke("prepare_server", { selectedAddons });
       const updated = result.addons.filter((addon) => addon.updated).length;
       serverDetails.textContent = [
         `World: ${result.bds.worldName}`,
@@ -95,7 +109,7 @@ window.addEventListener("DOMContentLoaded", () => {
         `Behavior Packs: ${result.bds.behaviorPacks}`,
         `Resource Packs: ${result.bds.resourcePacks}`,
       ].join("\n");
-      showOnly(homeScreen);
+      showOnly(serverScreen);
       startConsolePolling();
       scheduleAppUpdateChecks();
     } catch (error) {
@@ -122,11 +136,31 @@ window.addEventListener("DOMContentLoaded", () => {
 
   onboardingButton.addEventListener("click", () => {
     localStorage.setItem(EULA_AGREEMENT_KEY, "true");
-    void prepareServer();
+    showOnly(launcherHomeScreen);
+    scheduleAppUpdateChecks();
   });
 
   retryButton.addEventListener("click", () => {
     void prepareServer();
+  });
+
+  selectWerewolfButton.addEventListener("click", () => {
+    showOnly(addonSelectionScreen);
+  });
+
+  addonsBackButton.addEventListener("click", () => {
+    showOnly(launcherHomeScreen);
+  });
+
+  confirmAddonsButton.addEventListener("click", () => {
+    selectedAddons = optionalAddonInputs
+      .filter((input) => input.checked)
+      .map((input) => input.value);
+    void prepareServer();
+  });
+
+  changeAddonsButton.addEventListener("click", () => {
+    showOnly(addonSelectionScreen);
   });
 
   const setRunningControls = (running) => {
@@ -134,6 +168,7 @@ window.addEventListener("DOMContentLoaded", () => {
     restartServerButton.hidden = !running;
     stopServerButton.disabled = false;
     restartServerButton.disabled = false;
+    changeAddonsButton.disabled = running;
     consoleCommand.disabled = !running;
     consoleSend.disabled = !running;
     consoleLive.textContent = running ? "LIVE" : "OFFLINE";
@@ -330,8 +365,8 @@ window.addEventListener("DOMContentLoaded", () => {
     }
 
     if (localStorage.getItem(EULA_AGREEMENT_KEY) === "true") {
-      await prepareServer();
-      startConsolePolling();
+      showOnly(launcherHomeScreen);
+      scheduleAppUpdateChecks();
     } else {
       showOnly(onboardingScreen);
     }

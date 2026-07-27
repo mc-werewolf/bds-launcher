@@ -146,6 +146,14 @@ h2 {
   font-size: 18px;
 }
 
+.page-header {
+  margin-bottom: 24px;
+}
+
+.page-header .muted {
+  margin: 10px 0 0;
+}
+
 .muted {
   color: #a4afa6;
   white-space: pre-wrap;
@@ -207,6 +215,158 @@ h2 {
 
 .server-actions {
   flex-wrap: wrap;
+  gap: 12px;
+}
+
+.server-type-list {
+  display: grid;
+  gap: 14px;
+}
+
+.server-type-card {
+  width: 100%;
+  min-height: 104px;
+  padding: 18px;
+  display: grid;
+  grid-template-columns: 54px 1fr auto;
+  align-items: center;
+  gap: 16px;
+  border-color: #657269;
+  background: #263029;
+  text-align: left;
+}
+
+.server-type-card:not(:disabled):hover {
+  border-color: var(--green-light);
+  background: #2c3c2d;
+}
+
+.server-type-icon {
+  display: grid;
+  place-items: center;
+  width: 50px;
+  height: 50px;
+  border: 2px solid #68746a;
+  background: #151b17;
+  font-size: 27px;
+  filter: grayscale(.15);
+}
+
+.server-type-copy {
+  display: grid;
+  gap: 7px;
+}
+
+.server-type-copy strong {
+  font-size: 18px;
+}
+
+.server-type-copy small {
+  color: #aeb9b0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.card-arrow {
+  color: var(--green-light);
+  font: 38px/1 Consolas, monospace;
+}
+
+.server-type-card.is-upcoming {
+  opacity: .65;
+  filter: none;
+}
+
+.coming-soon,
+.required-label,
+.optional-label {
+  padding: 4px 8px;
+  border: 1px solid #68736a;
+  color: #b8c1ba;
+  background: #151a16;
+  font: 700 10px/1.2 Consolas, monospace;
+  letter-spacing: .08em;
+}
+
+.addon-group + .addon-group {
+  margin-top: 24px;
+}
+
+.group-heading {
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.group-heading h2 {
+  font-size: 15px;
+}
+
+.required-label {
+  border-color: var(--green);
+  color: #caffe0;
+}
+
+.optional-label {
+  border-color: #b49744;
+  color: #f2df9c;
+}
+
+.addon-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.addon-option {
+  min-height: 72px;
+  padding: 13px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  border: 2px solid #4b574e;
+  background: #151b17;
+  cursor: pointer;
+}
+
+.addon-option:has(input:checked) {
+  border-color: var(--green);
+  background: #1b291c;
+  box-shadow: inset 4px 0 0 var(--green-light);
+}
+
+.addon-option.is-required {
+  cursor: default;
+}
+
+.addon-option input {
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  accent-color: var(--green);
+}
+
+.addon-option span {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.addon-option strong {
+  font-size: 13px;
+}
+
+.addon-option small {
+  color: #9fa9a1;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.wizard-actions {
+  margin-top: 26px;
+  display: flex;
+  justify-content: space-between;
   gap: 12px;
 }
 
@@ -372,6 +532,21 @@ a {
 
   .server-header {
     align-items: flex-start;
+  }
+
+  .addon-list {
+    grid-template-columns: 1fr;
+  }
+
+  .server-type-card {
+    grid-template-columns: 46px 1fr auto;
+    padding: 14px;
+  }
+
+  .server-type-icon {
+    width: 44px;
+    height: 44px;
+    font-size: 23px;
   }
 
   #console-output {
