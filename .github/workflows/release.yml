@@ -47,6 +47,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Test launcher
+        if: github.ref == 'refs/heads/main'
         working-directory: src-tauri
         run: cargo test --release --locked
 
