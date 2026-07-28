@@ -62,6 +62,7 @@ pub async fn update_addons(
     config_url: &str,
     install_root: &Path,
     enabled_addons: &[String],
+    auth_token: Option<&str>,
 ) -> Result<Vec<UpdateResult>, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
@@ -88,8 +89,8 @@ pub async fn update_addons(
     {
         validate_addon_id(&addon.id)?;
         let latest_url = absolute_url(&config.registry_url, &addon.latest_version_url);
-        let release = client
-            .get(latest_url)
+        let addon_auth_token = private_addon_auth_token(&addon.id, auth_token);
+        let release = with_optional_bearer(client.get(latest_url), addon_auth_token)
             .send()
             .await
             .map_err(|error| format!("{}の更新情報を取得できませんでした: {error}", addon.id))?
@@ -116,8 +117,7 @@ pub async fn update_addons(
             continue;
         }
         let download_url = absolute_url(&config.registry_url, &release.download_url);
-        let bytes = client
-            .get(download_url)
+        let bytes = with_optional_bearer(client.get(download_url), addon_auth_token)
             .send()
             .await
             .map_err(|error| format!("{}をダウンロードできませんでした: {error}", addon.id))?
@@ -144,6 +144,23 @@ pub async fn update_addons(
         return Err(format!("ランチャー構成に{missing}がありません"));
     }
     Ok(results)
+}
+
+fn private_addon_auth_token<'a>(addon_id: &str, auth_token: Option<&'a str>) -> Option<&'a str> {
+    match addon_id {
+        "werewolf-dev-tools" => auth_token,
+        _ => None,
+    }
+}
+
+fn with_optional_bearer(
+    request: reqwest::RequestBuilder,
+    auth_token: Option<&str>,
+) -> reqwest::RequestBuilder {
+    match auth_token {
+        Some(token) if !token.trim().is_empty() => request.bearer_auth(token.trim()),
+        _ => request,
+    }
 }
 
 fn absolute_url(registry_url: &str, value: &str) -> String {

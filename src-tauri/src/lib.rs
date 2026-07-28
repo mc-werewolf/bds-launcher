@@ -6,6 +6,7 @@ use tauri::Manager;
 use tauri_plugin_updater::UpdaterExt;
 
 const LAUNCHER_CONFIG_URL: &str = "https://mc-werewolf.com/api/launcher/v1/config";
+const PRIVATE_ADDON_TOKEN_ENV: &str = "KAIRO_PRIVATE_ADDON_TOKEN";
 const PENDING_UPDATE_DIR: &str = "pending-update";
 const PENDING_UPDATE_PACKAGE: &str = "package.bin";
 const PENDING_UPDATE_METADATA: &str = "metadata.json";
@@ -16,8 +17,11 @@ const REQUIRED_WEREWOLF_ADDONS: &[&str] = &[
     "werewolf-vanillapack",
     "werewolf-bds-bridge",
 ];
-const OPTIONAL_WEREWOLF_ADDONS: &[&str] =
-    &["werewolf-additionalroles-1", "werewolf-additionalroles-4"];
+const OPTIONAL_WEREWOLF_ADDONS: &[&str] = &[
+    "werewolf-additionalroles-1",
+    "werewolf-additionalroles-4",
+    "werewolf-dev-tools",
+];
 
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -193,8 +197,17 @@ async fn prepare_server(
         .path()
         .app_data_dir()
         .map_err(|error| format!("アプリデータディレクトリを取得できませんでした: {error}"))?;
-    let addons =
-        updater::update_addons(LAUNCHER_CONFIG_URL, &install_root, &enabled_addons).await?;
+    let private_token = private_addon_token();
+    if enabled_addons.iter().any(|id| id == "werewolf-dev-tools") && private_token.is_none() {
+        return Err("private add-on token is required".to_owned());
+    }
+    let addons = updater::update_addons(
+        LAUNCHER_CONFIG_URL,
+        &install_root,
+        &enabled_addons,
+        private_token.as_deref(),
+    )
+    .await?;
     let addon_ids = addons
         .iter()
         .map(|result| result.addon_id().to_owned())
@@ -207,6 +220,18 @@ async fn prepare_server(
 struct PrepareResult {
     addons: Vec<updater::UpdateResult>,
     bds: bds::BdsStatus,
+}
+
+#[tauri::command]
+fn private_addons_enabled() -> bool {
+    private_addon_token().is_some()
+}
+
+fn private_addon_token() -> Option<String> {
+    std::env::var(PRIVATE_ADDON_TOKEN_ENV)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 #[tauri::command]
@@ -299,7 +324,8 @@ pub fn run() {
             stop_server,
             bridge_status,
             server_console,
-            send_server_command
+            send_server_command,
+            private_addons_enabled
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

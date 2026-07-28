@@ -18,6 +18,7 @@ window.addEventListener("DOMContentLoaded", () => {
   const confirmAddonsButton = document.querySelector("#confirm-addons-btn");
   const changeAddonsButton = document.querySelector("#change-addons-btn");
   const optionalAddonInputs = [...document.querySelectorAll(".optional-addon")];
+  const privateAddonOptions = [...document.querySelectorAll("[data-private-addon]")];
   const loadingSpinner = document.querySelector("#loading-spinner");
   const loadingTitle = document.querySelector("#loading-title");
   const loadingMessage = document.querySelector("#loading-message");
@@ -384,6 +385,11 @@ window.addEventListener("DOMContentLoaded", () => {
     loadingMessage.textContent = "適用待ちの更新を確認しています。";
 
     try {
+      const privateAddonsEnabled = await invoke("private_addons_enabled");
+      privateAddonOptions.forEach((option) => {
+        option.hidden = !privateAddonsEnabled;
+      });
+
       pendingAppUpdate = await invoke("pending_app_update");
       if (pendingAppUpdate) {
         loadingTitle.textContent = "ランチャーを更新しています";
