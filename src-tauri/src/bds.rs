@@ -10,7 +10,7 @@ use std::{
     process::{Child, Command, Stdio},
     sync::Mutex,
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::{
@@ -37,6 +37,9 @@ const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_secs(30);
 const SESSION_LOG_MARKER: &str = "[bds-launcher] BDS session starting";
 const PROCESS_RECORD_FILE: &str = ".bds-launcher-process.json";
 const CONSOLE_LOG_BYTES: u64 = 128 * 1024;
+const LOG_ARCHIVE_DIR: &str = "logs";
+const LOG_ARCHIVE_PREFIX: &str = "bedrock_server-";
+const LOG_ARCHIVE_KEEP: usize = 10;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -715,9 +718,11 @@ pub fn start_bds(install_root: &Path, process: &ServerProcess) -> Result<LaunchR
     if !executable.is_file() {
         return Err("BDSが準備されていません".to_owned());
     }
+    rotate_session_log(&bds_root).map_err(|error| error.to_string())?;
     let mut log = OpenOptions::new()
         .create(true)
-        .append(true)
+        .write(true)
+        .truncate(true)
         .open(bds_root.join("bedrock_server.log"))
         .map_err(|error| error.to_string())?;
     writeln!(log, "{SESSION_LOG_MARKER}").map_err(|error| error.to_string())?;
@@ -762,6 +767,46 @@ pub fn start_bds(install_root: &Path, process: &ServerProcess) -> Result<LaunchR
         port: server_port(&bds_root.join("server.properties")),
         world_name: WORLD_NAME.to_owned(),
     })
+}
+
+fn rotate_session_log(bds_root: &Path) -> io::Result<()> {
+    let log_path = bds_root.join("bedrock_server.log");
+    if !log_path.is_file() || log_path.metadata()?.len() == 0 {
+        return Ok(());
+    }
+
+    let archive_root = bds_root.join(LOG_ARCHIVE_DIR);
+    fs::create_dir_all(&archive_root)?;
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let mut archive_path = archive_root.join(format!("{LOG_ARCHIVE_PREFIX}{timestamp}.log"));
+    let mut suffix = 1;
+    while archive_path.exists() {
+        archive_path = archive_root.join(format!("{LOG_ARCHIVE_PREFIX}{timestamp}-{suffix}.log"));
+        suffix += 1;
+    }
+    fs::rename(&log_path, archive_path)?;
+    prune_log_archives(&archive_root)
+}
+
+fn prune_log_archives(archive_root: &Path) -> io::Result<()> {
+    let mut archives = fs::read_dir(archive_root)?
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry.file_type().is_ok_and(|file_type| file_type.is_file())
+                && entry.file_name().to_str().is_some_and(|name| {
+                    name.starts_with(LOG_ARCHIVE_PREFIX) && name.ends_with(".log")
+                })
+        })
+        .collect::<Vec<_>>();
+    archives.sort_by_key(|entry| entry.file_name());
+    let remove_count = archives.len().saturating_sub(LOG_ARCHIVE_KEEP);
+    for entry in archives.into_iter().take(remove_count) {
+        fs::remove_file(entry.path())?;
+    }
+    Ok(())
 }
 
 pub fn console_snapshot(
@@ -1195,6 +1240,41 @@ mod tests {
         assert!(configured.contains("tick-distance=6\n"));
         assert!(configured.contains("content-log-console-output-enabled=true\n"));
         assert!(configured.contains("content-log-file-enabled=true\n"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rotates_previous_session_log_and_prunes_archives() {
+        let root = std::env::temp_dir().join(format!(
+            "bds-launcher-log-rotation-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join(LOG_ARCHIVE_DIR)).unwrap();
+        fs::write(root.join("bedrock_server.log"), "old session\n").unwrap();
+        for index in 0..LOG_ARCHIVE_KEEP {
+            fs::write(
+                root.join(LOG_ARCHIVE_DIR)
+                    .join(format!("{LOG_ARCHIVE_PREFIX}{index}.log")),
+                format!("archive {index}\n"),
+            )
+            .unwrap();
+        }
+
+        rotate_session_log(&root).unwrap();
+
+        assert!(!root.join("bedrock_server.log").exists());
+        let archives = fs::read_dir(root.join(LOG_ARCHIVE_DIR))
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().unwrap().is_file())
+            .collect::<Vec<_>>();
+        assert_eq!(archives.len(), LOG_ARCHIVE_KEEP);
+        assert!(archives.iter().any(|entry| {
+            fs::read_to_string(entry.path())
+                .unwrap()
+                .contains("old session")
+        }));
         let _ = fs::remove_dir_all(root);
     }
 
