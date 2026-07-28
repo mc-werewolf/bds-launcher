@@ -1,6 +1,19 @@
 const { invoke } = window.__TAURI__.core;
 const EULA_AGREEMENT_KEY = "mc-werewolf:eula-agreed";
+const BDS_SETTINGS_KEY = "mc-werewolf:bds-settings";
 const APP_UPDATE_INTERVAL_MS = 15 * 60 * 1000;
+const DEFAULT_BDS_SETTINGS = {
+  serverName: "MC Werewolf Dev",
+  serverPort: 19132,
+  gameMode: "survival",
+  difficulty: "normal",
+  maxPlayers: 20,
+  onlineMode: true,
+  allowList: false,
+  allowCheats: true,
+  viewDistance: 10,
+  tickDistance: 4,
+};
 
 window.addEventListener("DOMContentLoaded", () => {
   const appUpdateEl = document.querySelector("#app-update");
@@ -12,13 +25,28 @@ window.addEventListener("DOMContentLoaded", () => {
   const loadingScreen = document.querySelector("#loading-screen");
   const launcherHomeScreen = document.querySelector("#launcher-home-screen");
   const addonSelectionScreen = document.querySelector("#addon-selection-screen");
+  const serverSettingsScreen = document.querySelector("#server-settings-screen");
   const serverScreen = document.querySelector("#server-screen");
   const selectWerewolfButton = document.querySelector("#select-werewolf-btn");
   const addonsBackButton = document.querySelector("#addons-back-btn");
   const confirmAddonsButton = document.querySelector("#confirm-addons-btn");
+  const settingsBackButton = document.querySelector("#settings-back-btn");
+  const confirmSettingsButton = document.querySelector("#confirm-settings-btn");
   const changeAddonsButton = document.querySelector("#change-addons-btn");
   const optionalAddonInputs = [...document.querySelectorAll(".optional-addon")];
   const privateAddonOptions = [...document.querySelectorAll("[data-private-addon]")];
+  const settingsInputs = {
+    serverName: document.querySelector("#setting-server-name"),
+    serverPort: document.querySelector("#setting-server-port"),
+    gameMode: document.querySelector("#setting-game-mode"),
+    difficulty: document.querySelector("#setting-difficulty"),
+    maxPlayers: document.querySelector("#setting-max-players"),
+    onlineMode: document.querySelector("#setting-online-mode"),
+    allowList: document.querySelector("#setting-allow-list"),
+    allowCheats: document.querySelector("#setting-allow-cheats"),
+    viewDistance: document.querySelector("#setting-view-distance"),
+    tickDistance: document.querySelector("#setting-tick-distance"),
+  };
   const loadingSpinner = document.querySelector("#loading-spinner");
   const loadingTitle = document.querySelector("#loading-title");
   const loadingMessage = document.querySelector("#loading-message");
@@ -44,6 +72,7 @@ window.addEventListener("DOMContentLoaded", () => {
   let pendingAppUpdate = null;
   let dismissedUpdateVersion = null;
   let selectedAddons = optionalAddonInputs.filter((input) => input.checked).map((input) => input.value);
+  let bdsSettings = loadBdsSettings();
   let lastConsoleOutput = "";
 
   const showOnly = (screen) => {
@@ -52,11 +81,79 @@ window.addEventListener("DOMContentLoaded", () => {
       loadingScreen,
       launcherHomeScreen,
       addonSelectionScreen,
+      serverSettingsScreen,
       serverScreen,
     ].forEach((element) => {
       element.hidden = element !== screen;
     });
   };
+
+  function clampInteger(value, min, max, fallback) {
+    const parsed = Number.parseInt(String(value), 10);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.min(max, Math.max(min, parsed));
+  }
+
+  function choice(value, allowed, fallback) {
+    return allowed.includes(value) ? value : fallback;
+  }
+
+  function normalizeBdsSettings(value) {
+    return {
+      serverName: String(value?.serverName ?? DEFAULT_BDS_SETTINGS.serverName).replace(/[\r\n=]/g, "").trim().slice(0, 64) || DEFAULT_BDS_SETTINGS.serverName,
+      serverPort: clampInteger(value?.serverPort, 1, 65535, DEFAULT_BDS_SETTINGS.serverPort),
+      gameMode: choice(value?.gameMode, ["survival", "creative", "adventure"], DEFAULT_BDS_SETTINGS.gameMode),
+      difficulty: choice(value?.difficulty, ["peaceful", "easy", "normal", "hard"], DEFAULT_BDS_SETTINGS.difficulty),
+      maxPlayers: clampInteger(value?.maxPlayers, 1, 100, DEFAULT_BDS_SETTINGS.maxPlayers),
+      onlineMode: Boolean(value?.onlineMode ?? DEFAULT_BDS_SETTINGS.onlineMode),
+      allowList: Boolean(value?.allowList ?? DEFAULT_BDS_SETTINGS.allowList),
+      allowCheats: Boolean(value?.allowCheats ?? DEFAULT_BDS_SETTINGS.allowCheats),
+      viewDistance: clampInteger(value?.viewDistance, 5, 32, DEFAULT_BDS_SETTINGS.viewDistance),
+      tickDistance: clampInteger(value?.tickDistance, 4, 12, DEFAULT_BDS_SETTINGS.tickDistance),
+    };
+  }
+
+  function loadBdsSettings() {
+    try {
+      return normalizeBdsSettings(JSON.parse(localStorage.getItem(BDS_SETTINGS_KEY) || "null"));
+    } catch {
+      return { ...DEFAULT_BDS_SETTINGS };
+    }
+  }
+
+  function saveBdsSettings(settings) {
+    bdsSettings = normalizeBdsSettings(settings);
+    localStorage.setItem(BDS_SETTINGS_KEY, JSON.stringify(bdsSettings));
+  }
+
+  function renderBdsSettings() {
+    const settings = normalizeBdsSettings(bdsSettings);
+    settingsInputs.serverName.value = settings.serverName;
+    settingsInputs.serverPort.value = settings.serverPort;
+    settingsInputs.gameMode.value = settings.gameMode;
+    settingsInputs.difficulty.value = settings.difficulty;
+    settingsInputs.maxPlayers.value = settings.maxPlayers;
+    settingsInputs.onlineMode.checked = settings.onlineMode;
+    settingsInputs.allowList.checked = settings.allowList;
+    settingsInputs.allowCheats.checked = settings.allowCheats;
+    settingsInputs.viewDistance.value = settings.viewDistance;
+    settingsInputs.tickDistance.value = settings.tickDistance;
+  }
+
+  function collectBdsSettings() {
+    return normalizeBdsSettings({
+      serverName: settingsInputs.serverName.value,
+      serverPort: settingsInputs.serverPort.value,
+      gameMode: settingsInputs.gameMode.value,
+      difficulty: settingsInputs.difficulty.value,
+      maxPlayers: settingsInputs.maxPlayers.value,
+      onlineMode: settingsInputs.onlineMode.checked,
+      allowList: settingsInputs.allowList.checked,
+      allowCheats: settingsInputs.allowCheats.checked,
+      viewDistance: settingsInputs.viewDistance.value,
+      tickDistance: settingsInputs.tickDistance.value,
+    });
+  }
 
   const renderAppUpdate = () => {
     if (!pendingAppUpdate || pendingAppUpdate.version === dismissedUpdateVersion) {
@@ -122,7 +219,7 @@ window.addEventListener("DOMContentLoaded", () => {
     retryButton.hidden = true;
 
     try {
-      const result = await invoke("prepare_server", { selectedAddons });
+      const result = await invoke("prepare_server", { selectedAddons, settings: bdsSettings });
       const updated = result.addons.filter((addon) => addon.updated).length;
       serverDetails.textContent = [
         `World: ${result.bds.worldName}`,
@@ -188,6 +285,19 @@ window.addEventListener("DOMContentLoaded", () => {
     selectedAddons = optionalAddonInputs
       .filter((input) => input.checked)
       .map((input) => input.value);
+    if (selectedAddons.includes("werewolf-dev-tools")) {
+      bdsSettings.allowCheats = true;
+    }
+    renderBdsSettings();
+    showOnly(serverSettingsScreen);
+  });
+
+  settingsBackButton.addEventListener("click", () => {
+    showOnly(addonSelectionScreen);
+  });
+
+  confirmSettingsButton.addEventListener("click", () => {
+    saveBdsSettings(collectBdsSettings());
     void prepareServer();
   });
 

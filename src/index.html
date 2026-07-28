@@ -141,7 +141,75 @@
 
         <div class="wizard-actions">
           <button id="addons-back-btn" class="secondary" type="button">戻る</button>
-          <button id="confirm-addons-btn" class="primary" type="button">この構成で準備する</button>
+          <button id="confirm-addons-btn" class="primary" type="button">BDS設定へ進む</button>
+        </div>
+      </section>
+
+      <section id="server-settings-screen" class="panel" hidden>
+        <header class="page-header">
+          <p class="eyebrow">BDS SETTINGS</p>
+          <h1>サーバー設定</h1>
+          <p class="muted">起動前に server.properties へ反映する設定です。Dev Tools で /gametest を使う場合は cheats を有効にしてください。</p>
+        </header>
+
+        <div class="settings-grid">
+          <label class="setting-field">
+            <span>サーバー名</span>
+            <input id="setting-server-name" type="text" maxlength="64" />
+          </label>
+          <label class="setting-field">
+            <span>ポート</span>
+            <input id="setting-server-port" type="number" min="1" max="65535" step="1" />
+          </label>
+          <label class="setting-field">
+            <span>ゲームモード</span>
+            <select id="setting-game-mode">
+              <option value="survival">Survival</option>
+              <option value="creative">Creative</option>
+              <option value="adventure">Adventure</option>
+            </select>
+          </label>
+          <label class="setting-field">
+            <span>難易度</span>
+            <select id="setting-difficulty">
+              <option value="peaceful">Peaceful</option>
+              <option value="easy">Easy</option>
+              <option value="normal">Normal</option>
+              <option value="hard">Hard</option>
+            </select>
+          </label>
+          <label class="setting-field">
+            <span>最大人数</span>
+            <input id="setting-max-players" type="number" min="1" max="100" step="1" />
+          </label>
+          <label class="setting-field">
+            <span>描画距離</span>
+            <input id="setting-view-distance" type="number" min="5" max="32" step="1" />
+          </label>
+          <label class="setting-field">
+            <span>Tick距離</span>
+            <input id="setting-tick-distance" type="number" min="4" max="12" step="1" />
+          </label>
+        </div>
+
+        <div class="toggle-list">
+          <label class="toggle-option">
+            <input id="setting-allow-cheats" type="checkbox" />
+            <span><strong>Cheats を許可</strong><small>/gametest と開発コマンドに必要です。</small></span>
+          </label>
+          <label class="toggle-option">
+            <input id="setting-online-mode" type="checkbox" />
+            <span><strong>Online mode</strong><small>接続プレイヤーを Xbox サービスで検証します。</small></span>
+          </label>
+          <label class="toggle-option">
+            <input id="setting-allow-list" type="checkbox" />
+            <span><strong>Allow list</strong><small>allowlist.json に登録されたプレイヤーだけ接続できます。</small></span>
+          </label>
+        </div>
+
+        <div class="wizard-actions">
+          <button id="settings-back-btn" class="secondary" type="button">戻る</button>
+          <button id="confirm-settings-btn" class="primary" type="button">この設定で準備する</button>
         </div>
       </section>
 

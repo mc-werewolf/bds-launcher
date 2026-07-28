@@ -177,6 +177,7 @@ fn pending_update_root(app: &tauri::AppHandle) -> Result<std::path::PathBuf, Str
 async fn prepare_server(
     app: tauri::AppHandle,
     selected_addons: Vec<String>,
+    settings: bds::BdsSettings,
 ) -> Result<PrepareResult, String> {
     let unknown = selected_addons
         .iter()
@@ -212,7 +213,7 @@ async fn prepare_server(
         .iter()
         .map(|result| result.addon_id().to_owned())
         .collect::<Vec<_>>();
-    let bds = bds::prepare_bds(&install_root, &addon_ids).await?;
+    let bds = bds::prepare_bds(&install_root, &addon_ids, &settings).await?;
     Ok(PrepareResult { addons, bds })
 }
 

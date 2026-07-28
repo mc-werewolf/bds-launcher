@@ -3,6 +3,7 @@ use sha2::Digest;
 #[cfg(target_os = "windows")]
 use std::os::windows::{io::AsRawHandle, process::CommandExt};
 use std::{
+    collections::HashSet,
     fs::{self, File, OpenOptions},
     io::{self, Cursor, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
@@ -197,7 +198,81 @@ pub struct ConsoleSnapshot {
     pub running: bool,
 }
 
-pub async fn prepare_bds(install_root: &Path, addon_ids: &[String]) -> Result<BdsStatus, String> {
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BdsSettings {
+    pub server_name: String,
+    pub server_port: u16,
+    pub game_mode: String,
+    pub difficulty: String,
+    pub max_players: u32,
+    pub online_mode: bool,
+    pub allow_list: bool,
+    pub allow_cheats: bool,
+    pub view_distance: u32,
+    pub tick_distance: u32,
+}
+
+impl Default for BdsSettings {
+    fn default() -> Self {
+        Self {
+            server_name: "MC Werewolf Dev".to_owned(),
+            server_port: 19132,
+            game_mode: "survival".to_owned(),
+            difficulty: "normal".to_owned(),
+            max_players: 20,
+            online_mode: true,
+            allow_list: false,
+            allow_cheats: true,
+            view_distance: 10,
+            tick_distance: 4,
+        }
+    }
+}
+
+impl BdsSettings {
+    fn server_properties(&self) -> Vec<(&'static str, String)> {
+        let defaults = Self::default();
+        vec![
+            (
+                "server-name",
+                sanitize_property_text(&self.server_name, &defaults.server_name, 64),
+            ),
+            ("level-name", WORLD_NAME.to_owned()),
+            ("server-port", normalize_port(self.server_port).to_string()),
+            (
+                "gamemode",
+                normalize_choice(
+                    &self.game_mode,
+                    &["survival", "creative", "adventure"],
+                    &defaults.game_mode,
+                ),
+            ),
+            (
+                "difficulty",
+                normalize_choice(
+                    &self.difficulty,
+                    &["peaceful", "easy", "normal", "hard"],
+                    &defaults.difficulty,
+                ),
+            ),
+            ("max-players", self.max_players.clamp(1, 100).to_string()),
+            ("online-mode", self.online_mode.to_string()),
+            ("allow-list", self.allow_list.to_string()),
+            ("allow-cheats", self.allow_cheats.to_string()),
+            ("view-distance", self.view_distance.clamp(5, 32).to_string()),
+            ("tick-distance", self.tick_distance.clamp(4, 12).to_string()),
+            ("content-log-console-output-enabled", "true".to_owned()),
+            ("content-log-file-enabled", "true".to_owned()),
+        ]
+    }
+}
+
+pub async fn prepare_bds(
+    install_root: &Path,
+    addon_ids: &[String],
+    settings: &BdsSettings,
+) -> Result<BdsStatus, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(300))
         .build()
@@ -248,7 +323,7 @@ pub async fn prepare_bds(install_root: &Path, addon_ids: &[String]) -> Result<Bd
         .map_err(|error| format!("アドオンをBDSへ適用できませんでした: {error}"))?;
     configure_bds_bridge(&current)
         .map_err(|error| format!("BDS Bridgeを設定できませんでした: {error}"))?;
-    ensure_server_properties(&current).map_err(|error| error.to_string())?;
+    ensure_server_properties(&current, settings).map_err(|error| error.to_string())?;
     Ok(BdsStatus {
         version: version_from_url(&download_url),
         updated,
@@ -515,47 +590,69 @@ fn configure_bds_bridge(bds_root: &Path) -> io::Result<()> {
     )
 }
 
-fn ensure_server_properties(bds_root: &Path) -> io::Result<()> {
+fn ensure_server_properties(bds_root: &Path, settings: &BdsSettings) -> io::Result<()> {
     let path = bds_root.join("server.properties");
     let content = fs::read_to_string(&path).unwrap_or_default();
-    let mut level_name_found = false;
-    let mut allow_list_found = false;
-    let mut content_log_console_found = false;
-    let mut content_log_file_found = false;
+    let properties = settings.server_properties();
+    let mut found = HashSet::new();
     let mut output = String::new();
     for line in content.lines() {
-        if line.starts_with("level-name=") {
-            output.push_str(&format!("level-name={WORLD_NAME}\n"));
-            level_name_found = true;
-        } else if line.starts_with("allow-list=") {
-            // The launcher starts a local server that must be connectable before
-            // an operator has had a chance to populate allowlist.json.
-            output.push_str("allow-list=false\n");
-            allow_list_found = true;
-        } else if line.starts_with("content-log-console-output-enabled=") {
-            output.push_str("content-log-console-output-enabled=true\n");
-            content_log_console_found = true;
-        } else if line.starts_with("content-log-file-enabled=") {
-            output.push_str("content-log-file-enabled=true\n");
-            content_log_file_found = true;
-        } else {
-            output.push_str(line);
-            output.push('\n');
+        if let Some((key, _)) = line.split_once('=') {
+            if let Some((managed_key, value)) = properties
+                .iter()
+                .find(|(managed_key, _)| *managed_key == key)
+            {
+                output.push_str(managed_key);
+                output.push('=');
+                output.push_str(value);
+                output.push('\n');
+                found.insert(*managed_key);
+                continue;
+            }
         }
+        output.push_str(line);
+        output.push('\n');
     }
-    if !level_name_found {
-        output.push_str(&format!("level-name={WORLD_NAME}\n"));
-    }
-    if !allow_list_found {
-        output.push_str("allow-list=false\n");
-    }
-    if !content_log_console_found {
-        output.push_str("content-log-console-output-enabled=true\n");
-    }
-    if !content_log_file_found {
-        output.push_str("content-log-file-enabled=true\n");
+    for (key, value) in properties {
+        if found.contains(key) {
+            continue;
+        }
+        output.push_str(key);
+        output.push('=');
+        output.push_str(&value);
+        output.push('\n');
     }
     fs::write(path, output)
+}
+
+fn normalize_port(port: u16) -> u16 {
+    if port == 0 {
+        19132
+    } else {
+        port
+    }
+}
+
+fn normalize_choice(value: &str, allowed: &[&str], default: &str) -> String {
+    let normalized = value.trim().to_ascii_lowercase();
+    if allowed.contains(&normalized.as_str()) {
+        normalized
+    } else {
+        default.to_owned()
+    }
+}
+
+fn sanitize_property_text(value: &str, default: &str, max_len: usize) -> String {
+    let mut sanitized = value
+        .chars()
+        .filter(|character| !matches!(character, '\r' | '\n' | '='))
+        .collect::<String>()
+        .trim()
+        .to_owned();
+    if sanitized.is_empty() {
+        sanitized = default.to_owned();
+    }
+    sanitized.chars().take(max_len).collect()
 }
 
 pub fn bridge_runtime_status(install_root: &Path) -> BridgeRuntimeStatus {
@@ -1057,7 +1154,7 @@ mod tests {
     }
 
     #[test]
-    fn configures_world_and_disables_empty_allow_list() {
+    fn configures_world_and_writes_server_settings() {
         let root = std::env::temp_dir().join(format!(
             "bds-launcher-properties-test-{}",
             std::process::id()
@@ -1070,11 +1167,32 @@ mod tests {
         )
         .unwrap();
 
-        ensure_server_properties(&root).unwrap();
+        let settings = BdsSettings {
+            server_name: "Dev Werewolf".to_owned(),
+            server_port: 19133,
+            game_mode: "creative".to_owned(),
+            difficulty: "easy".to_owned(),
+            max_players: 12,
+            online_mode: false,
+            allow_list: false,
+            allow_cheats: true,
+            view_distance: 12,
+            tick_distance: 6,
+        };
+
+        ensure_server_properties(&root, &settings).unwrap();
         let configured = fs::read_to_string(root.join("server.properties")).unwrap();
+        assert!(configured.contains("server-name=Dev Werewolf\n"));
         assert!(configured.contains("level-name=Werewolf\n"));
         assert!(configured.contains("allow-list=false\n"));
-        assert!(configured.contains("server-port=19132\n"));
+        assert!(configured.contains("allow-cheats=true\n"));
+        assert!(configured.contains("server-port=19133\n"));
+        assert!(configured.contains("gamemode=creative\n"));
+        assert!(configured.contains("difficulty=easy\n"));
+        assert!(configured.contains("max-players=12\n"));
+        assert!(configured.contains("online-mode=false\n"));
+        assert!(configured.contains("view-distance=12\n"));
+        assert!(configured.contains("tick-distance=6\n"));
         assert!(configured.contains("content-log-console-output-enabled=true\n"));
         assert!(configured.contains("content-log-file-enabled=true\n"));
         let _ = fs::remove_dir_all(root);

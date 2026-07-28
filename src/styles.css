@@ -373,6 +373,82 @@ h2 {
   line-height: 1.35;
 }
 
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.setting-field {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.setting-field span {
+  color: #d6ddd8;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.setting-field input,
+.setting-field select {
+  width: 100%;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 2px solid #4b574e;
+  border-radius: 0;
+  color: #f0f6ef;
+  background: #101511;
+  font: 14px "Segoe UI", Arial, sans-serif;
+}
+
+.toggle-list {
+  margin-top: 18px;
+  display: grid;
+  gap: 10px;
+}
+
+.toggle-option {
+  min-height: 66px;
+  padding: 13px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  border: 2px solid #4b574e;
+  background: #151b17;
+  cursor: pointer;
+}
+
+.toggle-option:has(input:checked) {
+  border-color: var(--green);
+  background: #1b291c;
+  box-shadow: inset 4px 0 0 var(--green-light);
+}
+
+.toggle-option input {
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  accent-color: var(--green);
+}
+
+.toggle-option span {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.toggle-option strong {
+  font-size: 13px;
+}
+
+.toggle-option small {
+  color: #9fa9a1;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .wizard-actions {
   margin-top: 26px;
   display: flex;
@@ -547,6 +623,10 @@ a {
   .server-type-card {
     grid-template-columns: 46px 1fr auto;
     padding: 14px;
+  }
+
+  .settings-grid {
+    grid-template-columns: 1fr;
   }
 
   .server-type-icon {
