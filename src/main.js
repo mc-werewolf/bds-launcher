@@ -228,6 +228,7 @@ window.addEventListener("DOMContentLoaded", () => {
         `Behavior Packs: ${result.bds.behaviorPacks}`,
         `Resource Packs: ${result.bds.resourcePacks}`,
       ].join("\n");
+      clearConsoleView();
       showOnly(serverScreen);
       startConsolePolling();
       scheduleAppUpdateChecks();
@@ -344,6 +345,12 @@ window.addEventListener("DOMContentLoaded", () => {
     } catch (error) {
       consoleError.textContent = `ログを取得できませんでした: ${error}`;
     }
+  };
+
+  const clearConsoleView = () => {
+    lastConsoleOutput = "";
+    consoleOutput.textContent = "サーバーを起動すると、ここにログが表示されます。";
+    consoleError.textContent = "";
   };
 
   const startConsolePolling = () => {

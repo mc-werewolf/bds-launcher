@@ -327,6 +327,7 @@ pub async fn prepare_bds(
     configure_bds_bridge(&current)
         .map_err(|error| format!("BDS Bridgeを設定できませんでした: {error}"))?;
     ensure_server_properties(&current, settings).map_err(|error| error.to_string())?;
+    clear_session_log(&current).map_err(|error| error.to_string())?;
     Ok(BdsStatus {
         version: version_from_url(&download_url),
         updated,
@@ -789,6 +790,15 @@ fn rotate_session_log(bds_root: &Path) -> io::Result<()> {
     }
     fs::rename(&log_path, archive_path)?;
     prune_log_archives(&archive_root)
+}
+
+fn clear_session_log(bds_root: &Path) -> io::Result<()> {
+    OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(bds_root.join("bedrock_server.log"))?;
+    Ok(())
 }
 
 fn prune_log_archives(archive_root: &Path) -> io::Result<()> {
@@ -1275,6 +1285,26 @@ mod tests {
                 .unwrap()
                 .contains("old session")
         }));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn clears_session_log_without_archiving() {
+        let root = std::env::temp_dir().join(format!(
+            "bds-launcher-log-clear-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("bedrock_server.log"), "old session\n").unwrap();
+
+        clear_session_log(&root).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(root.join("bedrock_server.log")).unwrap(),
+            ""
+        );
+        assert!(!root.join(LOG_ARCHIVE_DIR).exists());
         let _ = fs::remove_dir_all(root);
     }
 
