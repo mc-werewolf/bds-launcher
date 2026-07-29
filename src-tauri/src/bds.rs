@@ -243,7 +243,7 @@ impl Default for BdsSettings {
 }
 
 fn default_developer_packs_root() -> String {
-    r"E:\.projects\minecraft\kairo-js\packs".to_owned()
+    String::new()
 }
 
 fn default_developer_build_local_addons() -> bool {

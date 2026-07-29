@@ -195,6 +195,19 @@ pub fn install_local_addons(
     Ok(results)
 }
 
+pub fn local_addon_available(addon_id: &str, packs_root: &Path) -> bool {
+    local_addon_source(addon_id, packs_root).is_some_and(|source| {
+        source.join("BP").join("manifest.json").is_file()
+            || source.join("RP").join("manifest.json").is_file()
+    })
+}
+
+fn local_addon_source(addon_id: &str, packs_root: &Path) -> Option<PathBuf> {
+    let source_name = local_addon_directory_name(addon_id)?;
+    let source = packs_root.join(source_name);
+    source.is_dir().then_some(source)
+}
+
 fn local_addon_directory_name(addon_id: &str) -> Option<&'static str> {
     match addon_id {
         "kairo" => Some("kairo"),
@@ -211,6 +224,9 @@ fn local_addon_directory_name(addon_id: &str) -> Option<&'static str> {
 
 fn run_local_build(source: &Path) -> Result<(), String> {
     if !source.join("package.json").is_file() {
+        return Ok(());
+    }
+    if !local_kairo_command(source).is_file() {
         return Ok(());
     }
 
@@ -238,6 +254,13 @@ fn run_local_build(source: &Path) -> Result<(), String> {
         stdout.trim(),
         stderr.trim()
     ))
+}
+
+fn local_kairo_command(source: &Path) -> PathBuf {
+    source
+        .join("node_modules")
+        .join(".bin")
+        .join(if cfg!(windows) { "kairo.cmd" } else { "kairo" })
 }
 
 fn install_local_pack(source: &Path, target: &Path) -> io::Result<()> {

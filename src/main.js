@@ -14,7 +14,7 @@ const DEFAULT_BDS_SETTINGS = {
   viewDistance: 10,
   tickDistance: 4,
   developerMode: false,
-  developerPacksRoot: "E:\\.projects\\minecraft\\kairo-js\\packs",
+  developerPacksRoot: "",
   developerBuildLocalAddons: true,
 };
 
@@ -176,6 +176,9 @@ window.addEventListener("DOMContentLoaded", () => {
       `World: ${result.bds.worldName}`,
       `BDS ${result.bds.version}`,
       `Add-ons: ${result.addons.length} (${updated} updated)`,
+      ...(result.addons.some((addon) => addon.version === "local")
+        ? [`Local Add-ons: ${result.addons.filter((addon) => addon.version === "local").length}`]
+        : []),
       `Behavior Packs: ${result.bds.behaviorPacks}`,
       `Resource Packs: ${result.bds.resourcePacks}`,
       ...(bdsSettings.developerMode ? ["Mode: Developer (local packs)"] : []),

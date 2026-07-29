@@ -2,6 +2,7 @@ mod bds;
 mod network;
 mod updater;
 
+use std::collections::HashMap;
 use tauri::Manager;
 use tauri_plugin_updater::UpdaterExt;
 
@@ -198,13 +199,38 @@ async fn prepare_server(
         .path()
         .app_data_dir()
         .map_err(|error| format!("アプリデータディレクトリを取得できませんでした: {error}"))?;
-    let addons = if settings.developer_mode {
-        updater::install_local_addons(
-            &install_root,
-            &enabled_addons,
-            std::path::Path::new(&settings.developer_packs_root),
-            settings.developer_build_local_addons,
-        )?
+    let addons = if settings.developer_mode && !settings.developer_packs_root.trim().is_empty() {
+        let packs_root = std::path::Path::new(settings.developer_packs_root.trim());
+        let (local_addons, remote_addons): (Vec<_>, Vec<_>) = enabled_addons
+            .iter()
+            .cloned()
+            .partition(|id| updater::local_addon_available(id, packs_root));
+        let private_token = private_addon_token();
+        if remote_addons.iter().any(|id| id == "werewolf-dev-tools") && private_token.is_none() {
+            return Err("private add-on token is required".to_owned());
+        }
+
+        let mut results = Vec::new();
+        if !remote_addons.is_empty() {
+            results.extend(
+                updater::update_addons(
+                    LAUNCHER_CONFIG_URL,
+                    &install_root,
+                    &remote_addons,
+                    private_token.as_deref(),
+                )
+                .await?,
+            );
+        }
+        if !local_addons.is_empty() {
+            results.extend(updater::install_local_addons(
+                &install_root,
+                &local_addons,
+                packs_root,
+                settings.developer_build_local_addons,
+            )?);
+        }
+        order_addons(results, &enabled_addons)
     } else {
         let private_token = private_addon_token();
         if enabled_addons.iter().any(|id| id == "werewolf-dev-tools") && private_token.is_none() {
@@ -224,6 +250,20 @@ async fn prepare_server(
         .collect::<Vec<_>>();
     let bds = bds::prepare_bds(&install_root, &addon_ids, &settings).await?;
     Ok(PrepareResult { addons, bds })
+}
+
+fn order_addons(
+    addons: Vec<updater::UpdateResult>,
+    enabled_addons: &[String],
+) -> Vec<updater::UpdateResult> {
+    let mut by_id = addons
+        .into_iter()
+        .map(|addon| (addon.addon_id().to_owned(), addon))
+        .collect::<HashMap<_, _>>();
+    enabled_addons
+        .iter()
+        .filter_map(|id| by_id.remove(id))
+        .collect()
 }
 
 #[derive(serde::Serialize)]
