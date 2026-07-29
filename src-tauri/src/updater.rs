@@ -7,8 +7,13 @@ use std::{
     process::Command,
 };
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 const MAX_EXPANDED_SIZE: u64 = 1024 * 1024 * 1024;
 const LOCAL_ADDON_VERSION: &str = "local";
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -231,16 +236,16 @@ fn run_local_build(source: &Path) -> Result<(), String> {
     }
 
     let executable = if cfg!(windows) { "pnpm.cmd" } else { "pnpm" };
-    let output = Command::new(executable)
-        .args(["run", "build:ci"])
-        .current_dir(source)
-        .output()
-        .map_err(|error| {
-            format!(
-                "could not run pnpm build:ci in {}: {error}",
-                source.display()
-            )
-        })?;
+    let mut command = Command::new(executable);
+    command.args(["run", "build:ci"]).current_dir(source);
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+    let output = command.output().map_err(|error| {
+        format!(
+            "could not run pnpm build:ci in {}: {error}",
+            source.display()
+        )
+    })?;
 
     if output.status.success() {
         return Ok(());
