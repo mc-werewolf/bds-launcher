@@ -385,6 +385,10 @@ h2 {
   gap: 7px;
 }
 
+.developer-path-field {
+  grid-column: 1 / -1;
+}
+
 .setting-field span {
   color: #d6ddd8;
   font-size: 12px;

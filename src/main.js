@@ -13,6 +13,9 @@ const DEFAULT_BDS_SETTINGS = {
   allowCheats: true,
   viewDistance: 10,
   tickDistance: 4,
+  developerMode: false,
+  developerPacksRoot: "E:\\.projects\\minecraft\\kairo-js\\packs",
+  developerBuildLocalAddons: true,
 };
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -46,6 +49,9 @@ window.addEventListener("DOMContentLoaded", () => {
     allowCheats: document.querySelector("#setting-allow-cheats"),
     viewDistance: document.querySelector("#setting-view-distance"),
     tickDistance: document.querySelector("#setting-tick-distance"),
+    developerMode: document.querySelector("#setting-developer-mode"),
+    developerPacksRoot: document.querySelector("#setting-developer-packs-root"),
+    developerBuildLocalAddons: document.querySelector("#setting-developer-build-local-addons"),
   };
   const loadingSpinner = document.querySelector("#loading-spinner");
   const loadingTitle = document.querySelector("#loading-title");
@@ -110,6 +116,9 @@ window.addEventListener("DOMContentLoaded", () => {
       allowCheats: Boolean(value?.allowCheats ?? DEFAULT_BDS_SETTINGS.allowCheats),
       viewDistance: clampInteger(value?.viewDistance, 5, 32, DEFAULT_BDS_SETTINGS.viewDistance),
       tickDistance: clampInteger(value?.tickDistance, 4, 12, DEFAULT_BDS_SETTINGS.tickDistance),
+      developerMode: Boolean(value?.developerMode ?? DEFAULT_BDS_SETTINGS.developerMode),
+      developerPacksRoot: String(value?.developerPacksRoot ?? DEFAULT_BDS_SETTINGS.developerPacksRoot).trim() || DEFAULT_BDS_SETTINGS.developerPacksRoot,
+      developerBuildLocalAddons: Boolean(value?.developerBuildLocalAddons ?? DEFAULT_BDS_SETTINGS.developerBuildLocalAddons),
     };
   }
 
@@ -138,6 +147,9 @@ window.addEventListener("DOMContentLoaded", () => {
     settingsInputs.allowCheats.checked = settings.allowCheats;
     settingsInputs.viewDistance.value = settings.viewDistance;
     settingsInputs.tickDistance.value = settings.tickDistance;
+    settingsInputs.developerMode.checked = settings.developerMode;
+    settingsInputs.developerPacksRoot.value = settings.developerPacksRoot;
+    settingsInputs.developerBuildLocalAddons.checked = settings.developerBuildLocalAddons;
   }
 
   function collectBdsSettings() {
@@ -152,7 +164,22 @@ window.addEventListener("DOMContentLoaded", () => {
       allowCheats: settingsInputs.allowCheats.checked,
       viewDistance: settingsInputs.viewDistance.value,
       tickDistance: settingsInputs.tickDistance.value,
+      developerMode: settingsInputs.developerMode.checked,
+      developerPacksRoot: settingsInputs.developerPacksRoot.value,
+      developerBuildLocalAddons: settingsInputs.developerBuildLocalAddons.checked,
     });
+  }
+
+  function renderPrepareResult(result) {
+    const updated = result.addons.filter((addon) => addon.updated).length;
+    serverDetails.textContent = [
+      `World: ${result.bds.worldName}`,
+      `BDS ${result.bds.version}`,
+      `Add-ons: ${result.addons.length} (${updated} updated)`,
+      `Behavior Packs: ${result.bds.behaviorPacks}`,
+      `Resource Packs: ${result.bds.resourcePacks}`,
+      ...(bdsSettings.developerMode ? ["Mode: Developer (local packs)"] : []),
+    ].join("\n");
   }
 
   const renderAppUpdate = () => {
@@ -220,14 +247,7 @@ window.addEventListener("DOMContentLoaded", () => {
 
     try {
       const result = await invoke("prepare_server", { selectedAddons, settings: bdsSettings });
-      const updated = result.addons.filter((addon) => addon.updated).length;
-      serverDetails.textContent = [
-        `World: ${result.bds.worldName}`,
-        `BDS ${result.bds.version}`,
-        `Add-ons: ${result.addons.length}（${updated}件更新）`,
-        `Behavior Packs: ${result.bds.behaviorPacks}`,
-        `Resource Packs: ${result.bds.resourcePacks}`,
-      ].join("\n");
+      renderPrepareResult(result);
       clearConsoleView();
       showOnly(serverScreen);
       startConsolePolling();
@@ -392,6 +412,12 @@ window.addEventListener("DOMContentLoaded", () => {
 
     if (!serverLaunch) {
       try {
+        if (bdsSettings.developerMode) {
+          serverStatusMessage.textContent = "Developer Mode: syncing local add-ons...";
+          const result = await invoke("prepare_server", { selectedAddons, settings: bdsSettings });
+          renderPrepareResult(result);
+          clearConsoleView();
+        }
         serverLaunch = await invoke("start_server");
       } catch (error) {
         serverStatusMessage.textContent = `サーバーを起動できませんでした: ${error}`;
@@ -492,7 +518,9 @@ window.addEventListener("DOMContentLoaded", () => {
     restartServerButton.textContent = "再起動";
     if (!stopped) return;
 
-    await prepareServer();
+    if (!bdsSettings.developerMode) {
+      await prepareServer();
+    }
     void launchAndPublish();
   });
 

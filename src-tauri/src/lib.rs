@@ -198,17 +198,26 @@ async fn prepare_server(
         .path()
         .app_data_dir()
         .map_err(|error| format!("アプリデータディレクトリを取得できませんでした: {error}"))?;
-    let private_token = private_addon_token();
-    if enabled_addons.iter().any(|id| id == "werewolf-dev-tools") && private_token.is_none() {
-        return Err("private add-on token is required".to_owned());
-    }
-    let addons = updater::update_addons(
-        LAUNCHER_CONFIG_URL,
-        &install_root,
-        &enabled_addons,
-        private_token.as_deref(),
-    )
-    .await?;
+    let addons = if settings.developer_mode {
+        updater::install_local_addons(
+            &install_root,
+            &enabled_addons,
+            std::path::Path::new(&settings.developer_packs_root),
+            settings.developer_build_local_addons,
+        )?
+    } else {
+        let private_token = private_addon_token();
+        if enabled_addons.iter().any(|id| id == "werewolf-dev-tools") && private_token.is_none() {
+            return Err("private add-on token is required".to_owned());
+        }
+        updater::update_addons(
+            LAUNCHER_CONFIG_URL,
+            &install_root,
+            &enabled_addons,
+            private_token.as_deref(),
+        )
+        .await?
+    };
     let addon_ids = addons
         .iter()
         .map(|result| result.addon_id().to_owned())

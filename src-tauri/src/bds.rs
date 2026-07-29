@@ -214,6 +214,12 @@ pub struct BdsSettings {
     pub allow_cheats: bool,
     pub view_distance: u32,
     pub tick_distance: u32,
+    #[serde(default)]
+    pub developer_mode: bool,
+    #[serde(default = "default_developer_packs_root")]
+    pub developer_packs_root: String,
+    #[serde(default = "default_developer_build_local_addons")]
+    pub developer_build_local_addons: bool,
 }
 
 impl Default for BdsSettings {
@@ -229,8 +235,19 @@ impl Default for BdsSettings {
             allow_cheats: true,
             view_distance: 10,
             tick_distance: 4,
+            developer_mode: false,
+            developer_packs_root: default_developer_packs_root(),
+            developer_build_local_addons: default_developer_build_local_addons(),
         }
     }
+}
+
+fn default_developer_packs_root() -> String {
+    r"E:\.projects\minecraft\kairo-js\packs".to_owned()
+}
+
+fn default_developer_build_local_addons() -> bool {
+    true
 }
 
 impl BdsSettings {
@@ -1233,6 +1250,9 @@ mod tests {
             allow_cheats: true,
             view_distance: 12,
             tick_distance: 6,
+            developer_mode: false,
+            developer_packs_root: String::new(),
+            developer_build_local_addons: false,
         };
 
         ensure_server_properties(&root, &settings).unwrap();

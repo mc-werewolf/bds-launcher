@@ -190,9 +190,21 @@
             <span>Tick距離</span>
             <input id="setting-tick-distance" type="number" min="4" max="12" step="1" />
           </label>
+          <label class="setting-field developer-path-field">
+            <span>Developer packs root</span>
+            <input id="setting-developer-packs-root" type="text" spellcheck="false" />
+          </label>
         </div>
 
         <div class="toggle-list">
+          <label class="toggle-option">
+            <input id="setting-developer-mode" type="checkbox" />
+            <span><strong>Developer Mode</strong><small>Use local add-ons from the workspace when preparing or restarting BDS.</small></span>
+          </label>
+          <label class="toggle-option">
+            <input id="setting-developer-build-local-addons" type="checkbox" />
+            <span><strong>Build local add-ons</strong><small>Run pnpm build:ci before copying local BP/RP packs.</small></span>
+          </label>
           <label class="toggle-option">
             <input id="setting-allow-cheats" type="checkbox" />
             <span><strong>Cheats を許可</strong><small>/gametest と開発コマンドに必要です。</small></span>

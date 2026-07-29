@@ -4,9 +4,11 @@ use std::{
     fs::{self, File},
     io::{self, Cursor},
     path::{Path, PathBuf},
+    process::Command,
 };
 
 const MAX_EXPANDED_SIZE: u64 = 1024 * 1024 * 1024;
+const LOCAL_ADDON_VERSION: &str = "local";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -144,6 +146,154 @@ pub async fn update_addons(
         return Err(format!("ランチャー構成に{missing}がありません"));
     }
     Ok(results)
+}
+
+pub fn install_local_addons(
+    install_root: &Path,
+    enabled_addons: &[String],
+    packs_root: &Path,
+    build_local_addons: bool,
+) -> Result<Vec<UpdateResult>, String> {
+    if !packs_root.is_dir() {
+        return Err(format!(
+            "Developer Mode packs root does not exist: {}",
+            packs_root.display()
+        ));
+    }
+
+    let addons_root = install_root.join("addons");
+    fs::create_dir_all(&addons_root).map_err(|error| error.to_string())?;
+    let mut results = Vec::with_capacity(enabled_addons.len());
+
+    for addon_id in enabled_addons {
+        validate_addon_id(addon_id)?;
+        let source_name = local_addon_directory_name(addon_id)
+            .ok_or_else(|| format!("Developer Mode does not know local source for {addon_id}"))?;
+        let source = packs_root.join(source_name);
+        if !source.is_dir() {
+            return Err(format!(
+                "Developer Mode source is missing for {addon_id}: {}",
+                source.display()
+            ));
+        }
+
+        if build_local_addons {
+            run_local_build(&source).map_err(|error| format!("{addon_id}: {error}"))?;
+        }
+
+        let target = addons_root.join(addon_id);
+        install_local_pack(&source, &target)
+            .map_err(|error| format!("{addon_id} local pack install failed: {error}"))?;
+        results.push(UpdateResult {
+            addon_id: addon_id.to_owned(),
+            version: LOCAL_ADDON_VERSION.to_owned(),
+            required: true,
+            updated: true,
+        });
+    }
+
+    Ok(results)
+}
+
+fn local_addon_directory_name(addon_id: &str) -> Option<&'static str> {
+    match addon_id {
+        "kairo" => Some("kairo"),
+        "kairo-database" => Some("kairo-database"),
+        "werewolf-gamemanager" => Some("game-manager"),
+        "werewolf-vanillapack" => Some("vanilla-pack"),
+        "werewolf-bds-bridge" => Some("bds-bridge"),
+        "werewolf-additionalroles-1" => Some("additional-roles-1"),
+        "werewolf-additionalroles-4" => Some("additional-roles-4"),
+        "werewolf-dev-tools" => Some("dev-tools"),
+        _ => None,
+    }
+}
+
+fn run_local_build(source: &Path) -> Result<(), String> {
+    if !source.join("package.json").is_file() {
+        return Ok(());
+    }
+
+    let executable = if cfg!(windows) { "pnpm.cmd" } else { "pnpm" };
+    let output = Command::new(executable)
+        .args(["run", "build:ci"])
+        .current_dir(source)
+        .output()
+        .map_err(|error| {
+            format!(
+                "could not run pnpm build:ci in {}: {error}",
+                source.display()
+            )
+        })?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(format!(
+        "pnpm build:ci failed in {}\n{}\n{}",
+        source.display(),
+        stdout.trim(),
+        stderr.trim()
+    ))
+}
+
+fn install_local_pack(source: &Path, target: &Path) -> io::Result<()> {
+    let parent = target.parent().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "install target has no parent")
+    })?;
+    let staging = parent.join(format!(
+        ".{}.local-staging",
+        target.file_name().unwrap_or_default().to_string_lossy()
+    ));
+    let backup = parent.join(format!(
+        ".{}.local-backup",
+        target.file_name().unwrap_or_default().to_string_lossy()
+    ));
+    remove_if_exists(&staging)?;
+    remove_if_exists(&backup)?;
+    fs::create_dir_all(&staging)?;
+
+    let mut pack_count = 0;
+    for directory_name in ["BP", "RP"] {
+        let source_pack = source.join(directory_name);
+        if source_pack.is_dir() {
+            if !source_pack.join("manifest.json").is_file() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("{directory_name}/manifest.json is missing"),
+                ));
+            }
+            copy_recursively(&source_pack, &staging.join(directory_name))?;
+            pack_count += 1;
+        }
+    }
+    if pack_count == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "local source contains neither a BP nor an RP pack",
+        ));
+    }
+
+    fs::write(
+        staging.join(".kairo-version.json"),
+        serde_json::to_vec_pretty(&InstalledVersion {
+            version: LOCAL_ADDON_VERSION.to_owned(),
+            sha256: LOCAL_ADDON_VERSION.to_owned(),
+        })?,
+    )?;
+    if target.exists() {
+        fs::rename(target, &backup)?;
+    }
+    if let Err(error) = fs::rename(&staging, target) {
+        if backup.exists() {
+            let _ = fs::rename(&backup, target);
+        }
+        return Err(error);
+    }
+    remove_if_exists(&backup)
 }
 
 fn private_addon_auth_token<'a>(addon_id: &str, auth_token: Option<&'a str>) -> Option<&'a str> {
@@ -351,6 +501,22 @@ fn extract_zip(bytes: &[u8], destination: &Path) -> io::Result<()> {
     Ok(())
 }
 
+fn copy_recursively(source: &Path, destination: &Path) -> io::Result<()> {
+    if source.is_file() {
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(source, destination)?;
+        return Ok(());
+    }
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        copy_recursively(&entry.path(), &destination.join(entry.file_name()))?;
+    }
+    Ok(())
+}
+
 fn remove_if_exists(path: &PathBuf) -> io::Result<()> {
     if path.exists() {
         fs::remove_dir_all(path)
@@ -452,6 +618,42 @@ mod tests {
         fs::create_dir_all(root.join("BP")).unwrap();
         fs::write(root.join("BP/manifest.json"), "{}").unwrap();
         assert!(has_normalized_pack_layout(&root));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn installs_local_addon_from_workspace_pack_layout() {
+        let root = std::env::temp_dir().join(format!(
+            "bds-launcher-local-addon-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let packs_root = root.join("packs");
+        let game_manager = packs_root.join("game-manager");
+        fs::create_dir_all(game_manager.join("BP")).unwrap();
+        fs::create_dir_all(game_manager.join("RP")).unwrap();
+        let manifest = br#"{"header":{"uuid":"pack-id","version":[1,0,0]}}"#;
+        fs::write(game_manager.join("BP/manifest.json"), manifest).unwrap();
+        fs::write(game_manager.join("RP/manifest.json"), manifest).unwrap();
+
+        let install_root = root.join("install");
+        let results = install_local_addons(
+            &install_root,
+            &["werewolf-gamemanager".to_owned()],
+            &packs_root,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].addon_id, "werewolf-gamemanager");
+        assert_eq!(results[0].version, LOCAL_ADDON_VERSION);
+        assert!(install_root
+            .join("addons/werewolf-gamemanager/BP/manifest.json")
+            .is_file());
+        assert!(install_root
+            .join("addons/werewolf-gamemanager/RP/manifest.json")
+            .is_file());
         let _ = fs::remove_dir_all(root);
     }
 }
