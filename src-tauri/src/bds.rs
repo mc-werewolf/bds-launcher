@@ -857,13 +857,18 @@ pub fn console_snapshot(
         .join("bds")
         .join("current")
         .join("bedrock_server.log");
-    let output = read_file_tail(&log_path, CONSOLE_LOG_BYTES)
-        .unwrap_or_default()
-        .rsplit_once(SESSION_LOG_MARKER)
-        .map_or_else(String::new, |(_, current_session)| {
-            current_session.trim_start_matches(['\r', '\n']).to_owned()
-        });
+    let output = current_session_log_output(
+        read_file_tail(&log_path, CONSOLE_LOG_BYTES).unwrap_or_default(),
+    );
     Ok(ConsoleSnapshot { output, running })
+}
+
+fn current_session_log_output(output: String) -> String {
+    if let Some((_, current_session)) = output.rsplit_once(SESSION_LOG_MARKER) {
+        current_session.trim_start_matches(['\r', '\n']).to_owned()
+    } else {
+        output
+    }
 }
 
 pub fn send_command(
@@ -1326,6 +1331,22 @@ mod tests {
         );
         assert!(!root.join(LOG_ARCHIVE_DIR).exists());
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn extracts_current_session_log_after_marker() {
+        let output = current_session_log_output(format!(
+            "old session\n{SESSION_LOG_MARKER}\ncurrent session\n"
+        ));
+
+        assert_eq!(output, "current session\n");
+    }
+
+    #[test]
+    fn keeps_log_tail_when_marker_is_outside_tail() {
+        let output = current_session_log_output("latest current session lines\n".to_owned());
+
+        assert_eq!(output, "latest current session lines\n");
     }
 
     #[test]
