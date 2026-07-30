@@ -309,7 +309,10 @@ window.addEventListener("DOMContentLoaded", () => {
     selectedAddons = optionalAddonInputs
       .filter((input) => input.checked)
       .map((input) => input.value);
-    if (selectedAddons.includes("werewolf-dev-tools")) {
+    if (selectedAddons.includes("werewolf-replay") && !selectedAddons.includes("werewolf-dev-tools")) {
+      selectedAddons.push("werewolf-dev-tools");
+    }
+    if (selectedAddons.includes("werewolf-dev-tools") || selectedAddons.includes("werewolf-replay")) {
       bdsSettings.allowCheats = true;
     }
     renderBdsSettings();

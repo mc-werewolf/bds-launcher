@@ -223,6 +223,7 @@ fn local_addon_directory_name(addon_id: &str) -> Option<&'static str> {
         "werewolf-additionalroles-1" => Some("additional-roles-1"),
         "werewolf-additionalroles-4" => Some("additional-roles-4"),
         "werewolf-dev-tools" => Some("dev-tools"),
+        "werewolf-replay" => Some("replay"),
         _ => None,
     }
 }
@@ -327,6 +328,7 @@ fn install_local_pack(source: &Path, target: &Path) -> io::Result<()> {
 fn private_addon_auth_token<'a>(addon_id: &str, auth_token: Option<&'a str>) -> Option<&'a str> {
     match addon_id {
         "werewolf-dev-tools" => auth_token,
+        "werewolf-replay" => auth_token,
         _ => None,
     }
 }

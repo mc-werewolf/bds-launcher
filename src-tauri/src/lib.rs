@@ -22,6 +22,7 @@ const OPTIONAL_WEREWOLF_ADDONS: &[&str] = &[
     "werewolf-additionalroles-1",
     "werewolf-additionalroles-4",
     "werewolf-dev-tools",
+    "werewolf-replay",
 ];
 
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
@@ -206,7 +207,7 @@ async fn prepare_server(
             .cloned()
             .partition(|id| updater::local_addon_available(id, packs_root));
         let private_token = private_addon_token();
-        if remote_addons.iter().any(|id| id == "werewolf-dev-tools") && private_token.is_none() {
+        if remote_addons.iter().any(|id| id == "werewolf-dev-tools" || id == "werewolf-replay") && private_token.is_none() {
             return Err("private add-on token is required".to_owned());
         }
 
@@ -233,7 +234,7 @@ async fn prepare_server(
         order_addons(results, &enabled_addons)
     } else {
         let private_token = private_addon_token();
-        if enabled_addons.iter().any(|id| id == "werewolf-dev-tools") && private_token.is_none() {
+        if enabled_addons.iter().any(|id| id == "werewolf-dev-tools" || id == "werewolf-replay") && private_token.is_none() {
             return Err("private add-on token is required".to_owned());
         }
         updater::update_addons(
