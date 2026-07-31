@@ -299,9 +299,13 @@ fn start_server(
 
 #[tauri::command]
 async fn publish_server(
+    app: tauri::AppHandle,
     state: tauri::State<'_, network::NetworkState>,
 ) -> Result<network::PublishResult, String> {
-    network::publish(state.inner().clone()).await
+    let install_root = app.path().app_data_dir().map_err(|error| {
+        format!("繧｢繝励Μ繝・・繧ｿ繝・ぅ繝ｬ繧ｯ繝医Μ繧貞叙蠕励〒縺阪∪縺帙ｓ縺ｧ縺励◆: {error}")
+    })?;
+    network::publish(state.inner().clone(), &install_root).await
 }
 
 #[tauri::command]

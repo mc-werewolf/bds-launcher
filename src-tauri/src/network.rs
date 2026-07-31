@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::os::windows::process::CommandExt;
 use std::{
     collections::HashMap,
+    fs,
     net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
+    path::Path,
     process::{Command, Stdio},
     sync::{Arc, Mutex},
     time::Duration,
@@ -17,6 +19,9 @@ use tokio_tungstenite::{
 };
 
 const BDS_PORT: u16 = 19132;
+const RELAY_FIRST_PORT: u16 = 20000;
+const RELAY_LAST_PORT: u16 = 20099;
+const RELAY_PREFERENCE_FILE: &str = "network-relay-port.json";
 const DIRECTORY_URL: &str = "https://mc-werewolf.com/api/network/v1/servers";
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -44,6 +49,12 @@ struct RegistrationResponse {
     token: String,
 }
 
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RelayPortPreference {
+    port: u16,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PublishResult {
@@ -56,7 +67,47 @@ pub struct PublishResult {
     pub warning: Option<String>,
 }
 
-pub async fn publish(state: NetworkState) -> Result<PublishResult, String> {
+pub async fn publish(state: NetworkState, install_root: &Path) -> Result<PublishResult, String> {
+    if use_central_relay_publish() {
+        let preferred_port = relay_port_preference(install_root);
+        let mut endpoint = None;
+        let mut warning = Some("Waiting for the central relay assignment.".to_owned());
+        let session = register_with_preference(None, Some(preferred_port)).await?;
+        heartbeat(&session).await?;
+        *state
+            .0
+            .lock()
+            .map_err(|_| "繝阪ャ繝医Ρ繝ｼ繧ｯ迥ｶ諷九ｒ菫晏ｭ倥〒縺阪∪縺帙ｓ縺ｧ縺励◆")? =
+            Some(session.clone());
+        spawn_heartbeat(state.clone());
+        spawn_relay(state.clone(), session.clone());
+        for _ in 0..40 {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            let assigned = state
+                .0
+                .lock()
+                .ok()
+                .and_then(|value| value.as_ref().and_then(|value| value.endpoint.clone()));
+            if let Some(assigned) = assigned {
+                let _ = save_relay_port_preference(install_root, assigned.host_port);
+                endpoint = Some(assigned);
+                warning = None;
+                break;
+            }
+        }
+        return Ok(PublishResult {
+            server_id: session.id,
+            public_address: endpoint
+                .as_ref()
+                .map(|value| format!("{}:{}", value.host_name, value.host_port)),
+            local_address: Some(format!("127.0.0.1:{BDS_PORT}")),
+            port: BDS_PORT,
+            firewall_requested: false,
+            upnp_mapped: false,
+            warning,
+        });
+    }
+
     let firewall_requested = request_firewall_rule()?;
     let direct = discover_direct_endpoint().await;
     let (mut endpoint, local_address, upnp_mapped, mut warning) = match direct {
@@ -114,6 +165,10 @@ pub async fn publish(state: NetworkState) -> Result<PublishResult, String> {
     })
 }
 
+fn use_central_relay_publish() -> bool {
+    true
+}
+
 async fn discover_direct_endpoint() -> Result<(Endpoint, String), String> {
     let gateway = search_gateway(SearchOptions {
         timeout: Some(Duration::from_secs(10)),
@@ -149,13 +204,21 @@ async fn discover_direct_endpoint() -> Result<(Endpoint, String), String> {
 }
 
 async fn register(endpoint: Option<Endpoint>) -> Result<Session, String> {
+    register_with_preference(endpoint, None).await
+}
+
+async fn register_with_preference(
+    endpoint: Option<Endpoint>,
+    relay_port_preference: Option<u16>,
+) -> Result<Session, String> {
     let client = reqwest::Client::new();
     let registration = client
         .post(DIRECTORY_URL)
         .json(&serde_json::json!({
             "displayName": "Werewolf Server",
             "worldName": "Werewolf",
-            "maxPlayers": 10
+            "maxPlayers": 10,
+            "relayPortPreference": relay_port_preference
         }))
         .send()
         .await
@@ -170,6 +233,39 @@ async fn register(endpoint: Option<Endpoint>) -> Result<Session, String> {
         token: registration.token,
         endpoint,
     })
+}
+
+fn relay_port_preference(install_root: &Path) -> u16 {
+    let path = install_root.join(RELAY_PREFERENCE_FILE);
+    if let Ok(content) = fs::read_to_string(&path) {
+        if let Ok(value) = serde_json::from_str::<RelayPortPreference>(&content) {
+            if (RELAY_FIRST_PORT..=RELAY_LAST_PORT).contains(&value.port) {
+                return value.port;
+            }
+        }
+    }
+    RELAY_FIRST_PORT + stable_relay_port_offset(install_root) as u16
+}
+
+fn save_relay_port_preference(install_root: &Path, port: u16) -> Result<(), String> {
+    if !(RELAY_FIRST_PORT..=RELAY_LAST_PORT).contains(&port) {
+        return Ok(());
+    }
+    fs::create_dir_all(install_root)
+        .map_err(|error| format!("failed to create network preference directory: {error}"))?;
+    let content = serde_json::to_string_pretty(&RelayPortPreference { port })
+        .map_err(|error| format!("failed to serialize network preference: {error}"))?;
+    fs::write(install_root.join(RELAY_PREFERENCE_FILE), content)
+        .map_err(|error| format!("failed to save network preference: {error}"))
+}
+
+fn stable_relay_port_offset(install_root: &Path) -> u8 {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in install_root.to_string_lossy().as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    (hash % u64::from(RELAY_LAST_PORT - RELAY_FIRST_PORT + 1)) as u8
 }
 
 async fn heartbeat(session: &Session) -> Result<(), String> {
@@ -444,5 +540,28 @@ mod tests {
         let (address, payload) = decode_relay_frame(&encoded).unwrap();
         assert_eq!(address, "203.0.113.10:54321");
         assert_eq!(payload, &[1, 2, 3]);
+    }
+
+    #[test]
+    fn reuses_saved_relay_port_preference() {
+        let root = std::env::temp_dir().join(format!(
+            "bds-launcher-relay-port-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+
+        save_relay_port_preference(&root, 20042).unwrap();
+
+        assert_eq!(relay_port_preference(&root), 20042);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn derives_relay_port_preference_inside_relay_range() {
+        let root = std::env::temp_dir().join("bds-launcher-derived-relay-port-test");
+        let port = relay_port_preference(&root);
+
+        assert!((RELAY_FIRST_PORT..=RELAY_LAST_PORT).contains(&port));
     }
 }
