@@ -87,8 +87,13 @@ pub async fn publish(state: NetworkState, install_root: &Path) -> Result<Publish
             .map_err(|_| "繝阪ャ繝医Ρ繝ｼ繧ｯ迥ｶ諷九ｒ菫晏ｭ倥〒縺阪∪縺帙ｓ縺ｧ縺励◆")? =
             Some(session.clone());
         spawn_heartbeat(state.clone());
-        spawn_relay(state.clone(), session.clone());
-        for _ in 0..40 {
+        spawn_relay(
+            state.clone(),
+            session.clone(),
+            install_root.to_path_buf(),
+            Some(relay_preference.client_id.clone()),
+        );
+        for _ in 0..80 {
             tokio::time::sleep(Duration::from_millis(250)).await;
             let assigned = state
                 .0
@@ -150,8 +155,13 @@ pub async fn publish(state: NetworkState, install_root: &Path) -> Result<Publish
         .map_err(|_| "ネットワーク状態を保存できませんでした")? = Some(session.clone());
     spawn_heartbeat(state.clone());
     if endpoint.is_none() {
-        spawn_relay(state.clone(), session.clone());
-        for _ in 0..40 {
+        spawn_relay(
+            state.clone(),
+            session.clone(),
+            install_root.to_path_buf(),
+            None,
+        );
+        for _ in 0..80 {
             tokio::time::sleep(Duration::from_millis(250)).await;
             let assigned = state
                 .0
@@ -356,10 +366,23 @@ fn spawn_heartbeat(state: NetworkState) {
     });
 }
 
-fn spawn_relay(state: NetworkState, session: Session) {
+fn spawn_relay(
+    state: NetworkState,
+    session: Session,
+    install_root: std::path::PathBuf,
+    relay_client_id: Option<String>,
+) {
     tauri::async_runtime::spawn(async move {
         loop {
-            if relay_once(state.clone(), session.clone()).await.is_ok() {
+            if relay_once(
+                state.clone(),
+                session.clone(),
+                &install_root,
+                relay_client_id.as_deref(),
+            )
+            .await
+            .is_ok()
+            {
                 break;
             }
             tokio::time::sleep(Duration::from_secs(5)).await;
@@ -376,7 +399,12 @@ fn spawn_relay(state: NetworkState, session: Session) {
     });
 }
 
-async fn relay_once(state: NetworkState, session: Session) -> Result<(), String> {
+async fn relay_once(
+    state: NetworkState,
+    session: Session,
+    install_root: &Path,
+    relay_client_id: Option<&str>,
+) -> Result<(), String> {
     let url = format!(
         "wss://mc-werewolf.com/api/network/v1/servers/{}/relay",
         session.id
@@ -418,6 +446,15 @@ async fn relay_once(state: NetworkState, session: Session) -> Result<(), String>
                 let ready: Ready = serde_json::from_str(text.as_ref())
                     .map_err(|error| format!("中継準備通知を解析できませんでした: {error}"))?;
                 if ready.kind == "ready" {
+                    if let Some(client_id) = relay_client_id {
+                        let _ = save_relay_preference(
+                            install_root,
+                            &RelayPortPreference {
+                                port: ready.port,
+                                client_id: client_id.to_owned(),
+                            },
+                        );
+                    }
                     let endpoint = Endpoint {
                         host_name: ready.host_name,
                         host_port: ready.port,
